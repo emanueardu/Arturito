@@ -1,0 +1,16 @@
+robertito_obstacles:
+  ros__parameters:
+    sonar_topic: /arturito/ultrasonic
+    bumper_left_topic: /arturito/bumper_left
+    bumper_right_topic: /arturito/bumper_right
+    safety_topic: /cmd_vel/safety_stop
+    pointcloud_topic: /obstacle_points
+    pointcloud_frame: base_link
+    sonar_stop_distance: 0.25
+    sonar_min_range: 0.05
+    sonar_max_range: 2.0
+    sonar_timeout_sec: 1.0
+    bumper_distance: 0.12
+    bumper_angle_deg: 60.0
+    safety_publish_rate: 15.0
+    cloud_publish_rate: 5.0

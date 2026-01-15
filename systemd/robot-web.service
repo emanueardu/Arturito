@@ -1,0 +1,27 @@
+[Unit]
+Description=Interfaz web del robot (rosbridge + video/audio)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/robot/ros2_ws
+Environment=ROS_DOMAIN_ID=10
+Environment=HOME=/home/robot
+Environment=ROSBRIDGE_PORT=9090
+Environment=VIDEO_PORT=8080
+Environment=AUDIO_PORT=8081
+ExecStart=/bin/bash -c '\
+if pgrep -u "$USER" -f "[r]obot_auto.launch.py" >/dev/null; then \
+  echo "robot_auto.launch.py ya está activo; robot-web.service se mantiene en espera para evitar duplicados."; \
+  exec sleep infinity; \
+else \
+  exec /home/robot/ros2_ws/scripts/ejecutar_web_bridge.sh; \
+fi'
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

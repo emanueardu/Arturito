@@ -1,0 +1,10 @@
+docking_calibration_node:
+  ros__parameters:
+    range_topic: /arturito/ultrasonic
+    tag_topic: tag_detections
+    info_topic: /robot_web/docking_info
+    calibrate_topic: /robot_web/docking_calibrate
+    status_topic: /robot_web/docking_status
+    tag_size_m: 0.06
+    store_path: ~/.ros/robertito_docking_info.json
+    max_history: 5

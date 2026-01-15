@@ -1,0 +1,24 @@
+voice_synth_node:
+  ros__parameters:
+    input_topic: /assistant/say
+    voice_mode: jarvis
+    language: es-AR
+    rate: 0.72
+    pitch: -2st
+    pause_short_ms: 600
+    pause_medium_ms: 900
+    tts_provider: azure
+    supports_ssml: true
+    use_ssml: true
+    enable_ssml: true
+    voice_name: es-AR-TomasNeural
+    tts_rate: 0.90
+    tts_pitch: -1st
+    tts_output_format: Riff24Khz16BitMonoPcm
+    env_file: /home/robot/.config/robertito.env
+    audio_backend: alsa
+    audio_device: default
+    play_command: paplay
+    piper_dir: /home/robot/ros2_ws/piper
+    piper_sentence_silence: 0.3
+    cache_enabled: true

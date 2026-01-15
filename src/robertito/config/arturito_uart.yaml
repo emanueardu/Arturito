@@ -1,0 +1,21 @@
+arturito_uart_bridge:
+  ros__parameters:
+    port: /dev/ttyAMA0
+    baudrate: 115200
+    read_timeout_sec: 0.05
+    status_request_period_sec: 0.5
+    auto_request_status: true
+    max_wheel_pwm: 255
+    max_wheel_speed_mps: 0.25
+    base_width_m: 0.28
+    imu_frame_id: base_imu
+    range_frame_id: arturito_ultrasonic
+    battery_frame_id: base_link
+    imu_accel_lsb_per_g: 16384.0
+    imu_gyro_lsb_per_dps: 131.0
+    ultrasonic_fov_deg: 30.0
+    ultrasonic_min_range_m: 0.05
+    ultrasonic_max_range_m: 2.0
+    status_prefix: SENS
+    event_prefix: EVENT
+    swap_bumpers: true

@@ -1,0 +1,51 @@
+waypoints:
+- id: comedor
+  pose:
+    x: 7.4787
+    y: 14.1533
+    theta: 0.0
+- id: bano1
+  pose:
+    x: 3.7644
+    y: 16.5682
+    theta: 0.0
+- id: lavadero
+  pose:
+    x: 4.0387
+    y: 13.613
+    theta: 0.0
+- id: cocina
+  pose:
+    x: 5.9024
+    y: 10.6195
+    theta: 0.0
+- id: living
+  pose:
+    x: 5.8831
+    y: 4.5197
+    theta: 0.0
+- id: pasillo
+  pose:
+    x: 3.7123
+    y: 8.9491
+    theta: 0.0
+- id: bano2
+  pose:
+    x: 3.6463
+    y: 10.9946
+    theta: 0.0
+- id: habitacion_leon
+  pose:
+    x: 2.226
+    y: 5.3688
+    theta: 0.0
+- id: habitacion_eloy
+  pose:
+    x: 1.7051
+    y: 11.2064
+    theta: 0.0
+- id: base
+  pose:
+    x: 10.0396
+    y: 15.2486
+    theta: -1.5708

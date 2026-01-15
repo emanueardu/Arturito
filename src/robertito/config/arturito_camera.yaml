@@ -1,0 +1,16 @@
+arturito_face_detector:
+  ros__parameters:
+    camera_device: 0
+    frame_width: 640
+    frame_height: 480
+    frame_rate: 15.0
+    frame_id: arturito_camera
+    cascade_path: ""
+    scale_factor: 1.1
+    min_neighbors: 5
+    min_size_px: 30
+    publish_annotated_image: true
+    annotated_topic: arturito/camera/faces/image
+    detection_topic: arturito/camera/faces
+    publish_brightness: true
+    brightness_topic: arturito/camera/brightness

@@ -1,0 +1,17 @@
+[Unit]
+Description=Stack principal del robot (Robertito + web bridge)
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/robot/ros2_ws
+EnvironmentFile=/home/robot/.config/robertito.env
+Environment=HOME=/home/robot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/robot/ros2_ws/scripts/start_arturito.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

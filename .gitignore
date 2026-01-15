@@ -1,0 +1,43 @@
+# Colcon / ROS build artefacts
+build/
+install/
+log/
+*.egg-info
+pip-wheel-metadata/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# ROS runtime state
+.ros/
+.ros_cli/
+.rosinstall
+.rosinstall.*
+
+# Local editor / OS files
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Environment and secrets
+.env
+*.env
+.env.*
+/home/robot/.config/robertito.env
+
+# Frontend dependencies
+dist/
+web/robot-ui/dist/
+web/robot-ui/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Tests
+.pytest_cache/
+
+# Hardware/audio samples
+*.wav

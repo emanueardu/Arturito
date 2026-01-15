@@ -1,0 +1,13 @@
+wifi_localization_node:
+  ros__parameters:
+    targets:
+      - 192.168.0.1
+    ping_count: 4
+    ping_timeout_sec: 1.0
+    measurement_period_sec: 3.0
+    fail_latency_ms: 999.0
+    anchor_store_path: ~/.ros/robertito_wifi_anchors.json
+    anchors_topic: /robot_web/wifi_anchors
+    pose_topic: /robot_web/wifi_pose
+    status_topic: /robot_web/wifi_status
+    calibrate_topic: /robot_web/wifi_calibrate

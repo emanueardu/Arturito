@@ -1,0 +1,12 @@
+robertito_map_odom_broadcaster:
+  ros__parameters:
+    wifi_pose_topic: /robot_web/wifi_pose
+    docking_info_topic: /robot_web/docking_info
+    status_topic: /localization/status
+    map_frame: map
+    odom_frame: odom
+    base_frame: base_link
+    alpha: 0.4
+    strong_alpha: 0.8
+    max_jump_xy: 0.8
+    max_jump_yaw_deg: 35.0

@@ -1,0 +1,13 @@
+tags:
+  - id: 0
+    size_m: 0.048
+    frame_id: tag_0
+    pose:
+      position:
+        x: 10.0396
+        y: 15.2486
+        z: 0.05
+      orientation_rpy:
+        roll: 0.0
+        pitch: 0.0
+        yaw: -1.5708

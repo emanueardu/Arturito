@@ -1,0 +1,16 @@
+robertito_open_loop_odom:
+  ros__parameters:
+    cmd_vel_topic: /cmd_vel
+    imu_topic: /arturito/imu
+    odom_frame: odom
+    base_frame: base_link
+    publish_frequency: 25.0
+    max_linear_speed: 0.25
+    max_angular_speed: 1.2
+    max_linear_accel: 0.6
+    max_angular_accel: 1.0
+    linear_deadband: 0.01
+    angular_deadband: 0.01
+    gyro_bias_path: ~/.ros/robertito_gyro_bias.json
+    gyro_calibration_duration: 5.0
+    cmd_vel_timeout: 0.6
