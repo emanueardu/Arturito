@@ -16,9 +16,9 @@ voice_synth_node:
     tts_pitch: -1st
     tts_output_format: Riff24Khz16BitMonoPcm
     env_file: /home/robot/.config/robertito.env
-    audio_backend: alsa
+    audio_backend: sounddevice
     audio_device: default
-    play_command: paplay
+    play_command: "/usr/bin/paplay {wav}"
     piper_dir: /home/robot/ros2_ws/piper
     piper_sentence_silence: 0.3
     cache_enabled: true

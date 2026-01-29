@@ -4,6 +4,7 @@ import os
 import queue
 import re
 import shutil
+import shlex
 import subprocess
 import threading
 import time
@@ -277,15 +278,26 @@ class VoiceSynthNode(Node):
         except queue.Full:
             self.get_logger().warning("Speech queue full, dropping startup message.")
 
-    @staticmethod
-    def _resolve_play_command(play_command: str) -> str:
+    @classmethod
+    def _resolve_play_command(cls, play_command: str) -> str:
         if play_command:
-            return play_command
-        if shutil.which("paplay"):
-            return "paplay"
-        if shutil.which("aplay"):
-            return "aplay"
+            return cls._ensure_wav_placeholder(play_command)
+        paplay_path = shutil.which("paplay")
+        if paplay_path:
+            return cls._ensure_wav_placeholder(f"{paplay_path} {{wav}}")
+        aplay_path = shutil.which("aplay")
+        if aplay_path:
+            return cls._ensure_wav_placeholder(f"{aplay_path} {{wav}}")
         return ""
+
+    @staticmethod
+    def _ensure_wav_placeholder(command: str) -> str:
+        cleaned = (command or "").strip()
+        if not cleaned:
+            return ""
+        if "{wav}" not in cleaned:
+            cleaned = f"{cleaned} {{wav}}"
+        return cleaned
 
     def _build_audio_player(self) -> AudioPlayer:
         backend = self._audio_backend
@@ -667,12 +679,73 @@ class VoiceSynthNode(Node):
         return None
 
     def _play_audio(self, audio_path: str) -> None:
+        if not audio_path:
+            self.get_logger().warning("Sin ruta de audio para reproducir.")
+            return
+
+        if self._play_command:
+            args = self._command_from_template(self._play_command, audio_path)
+            if not args:
+                self.get_logger().warning(
+                    "play_command quedó vacío después de formatear el archivo WAV."
+                )
+            else:
+                if self._run_external_command(args, audio_path, "play_command"):
+                    return
+                fallback_args = self._paplay_fallback_args(audio_path, args)
+                if fallback_args:
+                    if self._run_external_command(
+                        fallback_args, audio_path, "paplay fallback"
+                    ):
+                        return
+
+        backend_label = getattr(self._audio_player, "backend", "desconocido")
+        self.get_logger().info(
+            f"Reproduciendo '{audio_path}' mediante backend interno '{backend_label}'."
+        )
         try:
             with open(audio_path, "rb") as audio_file:
                 wav_bytes = audio_file.read()
             self._audio_player.play_wav_bytes(wav_bytes)
         except Exception as exc:
             self.get_logger().warning(f"Audio playback failed: {exc}")
+
+    @staticmethod
+    def _command_from_template(template: str, audio_path: str) -> list[str]:
+        formatted = template.replace("{wav}", audio_path)
+        if not formatted.strip():
+            return []
+        return shlex.split(formatted)
+
+    def _paplay_fallback_args(
+        self, audio_path: str, previous_args: list[str]
+    ) -> list[str]:
+        paplay_path = shutil.which("paplay")
+        if not paplay_path or self._is_paplay_command(previous_args):
+            return []
+        return [paplay_path, audio_path]
+
+    @staticmethod
+    def _is_paplay_command(args: list[str]) -> bool:
+        if not args:
+            return False
+        return os.path.basename(args[0]) == "paplay"
+
+    def _run_external_command(
+        self, cmd_args: list[str], audio_path: str, label: str
+    ) -> bool:
+        command_display = shlex.join(cmd_args)
+        self.get_logger().info(
+            f"Reproduciendo '{audio_path}' usando comando externo '{command_display}' ({label})."
+        )
+        try:
+            subprocess.run(cmd_args, check=True)
+            return True
+        except Exception as exc:
+            self.get_logger().error(
+                f"Reproducción externa ({label}) falló ({cmd_args[0]}): {exc}"
+            )
+            return False
 
     def _cache_key(self, text: str) -> str:
         key = "|".join(

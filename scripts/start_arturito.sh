@@ -83,6 +83,8 @@ export ROS_HOME="$LOG_DIR"
 export RMW_IMPLEMENTATION="rmw_cyclonedds_cpp"
 export PATH="$HOME/.local/bin:$PATH"
 export PYTHONPATH="$HOME/.local/lib/python3.12/site-packages:${PYTHONPATH:-}"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/1000}"
+export PULSE_SERVER="${PULSE_SERVER:-unix:${XDG_RUNTIME_DIR}/pulse/native}"
 
 STARTUP_MESSAGE="${STARTUP_MESSAGE:-Hola, soy Robertito}"
 WAKE_WORD="${WAKE_WORD:-robertito}"
