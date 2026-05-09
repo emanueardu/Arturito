@@ -41,3 +41,9 @@ yarn-error.log*
 
 # Hardware/audio samples
 *.wav
+
+# Virtualenvs y backups locales
+.venv/
+.codex-backups/
+*.bak_*
+
