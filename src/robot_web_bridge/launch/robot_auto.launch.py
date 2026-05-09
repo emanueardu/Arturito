@@ -1,5 +1,6 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
@@ -38,6 +39,15 @@ def generate_launch_description() -> LaunchDescription:
     audio_device = DeclareLaunchArgument('audio_device', default_value='default')
     enable_audio = DeclareLaunchArgument('enable_audio_server', default_value='true')
     enable_alsa = DeclareLaunchArgument('enable_alsa_fallback', default_value='false')
+    # PR1 (2026-05): web stack opt-in. El servicio systemd corre en headless
+    # por default para ahorrar RAM en la Pi 5. Levantar con
+    # `ros2 launch robot_web_bridge robot_auto.launch.py enable_web_ui:=true`
+    # o usar `ros2 launch robertito web_ui.launch.py` por separado.
+    enable_web_ui = DeclareLaunchArgument(
+        'enable_web_ui',
+        default_value='false',
+        description='Si true, levanta rosbridge + bridges web (video/audio/control).',
+    )
 
     robertito_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -77,6 +87,7 @@ def generate_launch_description() -> LaunchDescription:
             'vacuum_input_topic': LaunchConfiguration('vacuum_input_topic'),
             'brush_input_topic': LaunchConfiguration('brush_input_topic'),
         }.items(),
+        condition=IfCondition(LaunchConfiguration('enable_web_ui')),
     )
 
     return LaunchDescription(
@@ -101,6 +112,7 @@ def generate_launch_description() -> LaunchDescription:
             audio_device,
             enable_audio,
             enable_alsa,
+            enable_web_ui,
             robertito_launch,
             web_bridge_launch,
         ]
