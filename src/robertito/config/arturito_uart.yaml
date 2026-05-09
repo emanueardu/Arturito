@@ -7,6 +7,10 @@ arturito_uart_bridge:
     auto_request_status: true
     max_wheel_pwm: 255
     max_wheel_speed_mps: 0.25
+    # PWM mínimo efectivo del motor (deadband). Cualquier comando no-cero
+    # con |PWM| < min_wheel_pwm se eleva a este valor conservando el signo.
+    # En este robot: motores arrancan a partir de PWM ≈ 200.
+    min_wheel_pwm: 200
     base_width_m: 0.28
     imu_frame_id: base_imu
     range_frame_id: arturito_ultrasonic

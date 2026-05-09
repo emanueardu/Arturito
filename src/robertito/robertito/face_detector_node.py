@@ -3,6 +3,7 @@ import threading
 from typing import Optional
 
 import cv2
+import numpy as np
 import rclpy
 from cv_bridge import CvBridge
 from rclpy.node import Node
@@ -34,6 +35,46 @@ class ArturitoFaceDetector(Node):
         self._scale_factor = float(self.declare_parameter('scale_factor', 1.1).value)
         self._min_neighbors = int(self.declare_parameter('min_neighbors', 5).value)
         self._min_size = int(self.declare_parameter('min_size_px', 30).value)
+
+        # Pre-procesado para baja iluminación.
+        # CLAHE (Contrast Limited Adaptive Histogram Equalization) ecualiza
+        # contraste por tiles, levanta caras en zonas oscuras sin saturar
+        # las claras. Es gratis (~0.5ms en 640x480 en Pi 5) y mejora mucho
+        # la detección con luz pobre.
+        self._enable_clahe = bool(self.declare_parameter('enable_clahe', True).value)
+        self._clahe_clip_limit = float(
+            self.declare_parameter('clahe_clip_limit', 2.5).value
+        )
+        self._clahe_tile_grid = int(
+            self.declare_parameter('clahe_tile_grid', 8).value
+        )
+        if self._enable_clahe and self._clahe_tile_grid > 0:
+            self._clahe = cv2.createCLAHE(
+                clipLimit=self._clahe_clip_limit,
+                tileGridSize=(self._clahe_tile_grid, self._clahe_tile_grid),
+            )
+        else:
+            self._clahe = None
+        # Brillo y umbral para boost de gamma en frames oscuros (refuerzo).
+        self._dark_gamma_threshold = float(
+            self.declare_parameter('dark_gamma_threshold', 60.0).value
+        )
+        self._dark_gamma_value = float(
+            self.declare_parameter('dark_gamma_value', 1.6).value
+        )
+
+        # V4L2 boost: los rangos varían por cámara. -1 = no tocar (preserva
+        # el default del driver/usuario). Para FaceCam 1000X probá:
+        #   auto_exposure=3, brightness=128, gain=200, contrast=128
+        # Si se sobre-expone (lavado), bajá brillo y gain.
+        self._auto_exposure_v4l = int(
+            self.declare_parameter('cam_auto_exposure', 3).value
+        )
+        self._brightness_v4l = int(
+            self.declare_parameter('cam_brightness', 128).value
+        )
+        self._gain_v4l = int(self.declare_parameter('cam_gain', 200).value)
+        self._contrast_v4l = int(self.declare_parameter('cam_contrast', 128).value)
         self._publish_annotated = bool(
             self.declare_parameter('publish_annotated_image', True).value
         )
@@ -99,6 +140,26 @@ class ArturitoFaceDetector(Node):
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(self._frame_width))
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self._frame_height))
             cap.set(cv2.CAP_PROP_FPS, float(self._fps))
+            # Boost para baja iluminación: dejamos auto-exposure activo (3 en
+            # V4L2) y subimos brillo/gain. Cada webcam acepta rangos distintos;
+            # los SET pueden silenciosamente fallar en valores fuera de rango,
+            # por eso ignoramos el resultado y solo logueamos.
+            try:
+                if self._auto_exposure_v4l > 0:
+                    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, float(self._auto_exposure_v4l))
+                if self._brightness_v4l >= 0:
+                    cap.set(cv2.CAP_PROP_BRIGHTNESS, float(self._brightness_v4l))
+                if self._gain_v4l >= 0:
+                    cap.set(cv2.CAP_PROP_GAIN, float(self._gain_v4l))
+                if self._contrast_v4l >= 0:
+                    cap.set(cv2.CAP_PROP_CONTRAST, float(self._contrast_v4l))
+                self.get_logger().info(
+                    f'Camera tuned: auto_exp={self._auto_exposure_v4l} '
+                    f'brightness={self._brightness_v4l} '
+                    f'gain={self._gain_v4l} contrast={self._contrast_v4l}'
+                )
+            except Exception as exc:
+                self.get_logger().warn(f'Camera tuning falló: {exc}')
             if not cap.isOpened():
                 self.get_logger().error(
                     f'Unable to open camera device {self._camera_device}'
@@ -166,7 +227,26 @@ class ArturitoFaceDetector(Node):
         if self._pub_brightness is not None:
             mean_val = float(cv2.mean(gray)[0])
             self._pub_brightness.publish(Float32(data=mean_val))
-        detections = self._detect_faces(gray)
+
+        # Pre-procesado para detección en baja iluminación:
+        #  1. Si la imagen está oscura (mean < umbral), aplica gamma < 1
+        #     para levantar tonos medios.
+        #  2. CLAHE ecualiza el contraste local, ayuda con caras en sombra.
+        gray_for_detect = gray
+        try:
+            mean_now = float(cv2.mean(gray)[0])
+            if mean_now < self._dark_gamma_threshold and self._dark_gamma_value > 1.0:
+                inv_gamma = 1.0 / self._dark_gamma_value
+                table = (
+                    ((np.arange(256) / 255.0) ** inv_gamma) * 255.0
+                ).astype('uint8')
+                gray_for_detect = cv2.LUT(gray_for_detect, table)
+            if self._clahe is not None:
+                gray_for_detect = self._clahe.apply(gray_for_detect)
+        except Exception:
+            gray_for_detect = gray
+
+        detections = self._detect_faces(gray_for_detect)
         self._publish_results(detections, frame)
 
     def _detect_faces(self, gray) -> list[tuple[int, int, int, int]]:

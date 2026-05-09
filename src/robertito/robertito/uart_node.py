@@ -45,6 +45,10 @@ class ArturitoUARTBridge(Node):
         self._max_wheel_speed = float(
             self.declare_parameter('max_wheel_speed_mps', 0.25).value
         )
+        # Deadband: el motor real no responde por debajo de este PWM. Si el
+        # comando es no-cero pero su |PWM| < min_wheel_pwm, lo elevamos a
+        # min_wheel_pwm conservando el signo. Con cmd=0 → PWM=0 (frena).
+        self._min_wheel_pwm = int(self.declare_parameter('min_wheel_pwm', 200).value)
         self._base_width = float(self.declare_parameter('base_width_m', 0.28).value)
         self._imu_frame = self.declare_parameter('imu_frame_id', 'imu_link').value
         self._range_frame = self.declare_parameter('range_frame_id', 'ultrasonic_link').value
@@ -265,6 +269,19 @@ class ArturitoUARTBridge(Node):
         left_pwm = int(clamp(round(left_speed * scale), -self._max_wheel_pwm, self._max_wheel_pwm))
         right_pwm = int(clamp(round(right_speed * scale), -self._max_wheel_pwm, self._max_wheel_pwm))
 
+        # Deadband compensation: si la rueda quiere moverse pero su PWM cae
+        # debajo del umbral mecánico del motor, elevamos a min_wheel_pwm.
+        min_pwm = self._min_wheel_pwm
+        if min_pwm > 0:
+            if 0 < left_pwm < min_pwm:
+                left_pwm = min_pwm
+            elif -min_pwm < left_pwm < 0:
+                left_pwm = -min_pwm
+            if 0 < right_pwm < min_pwm:
+                right_pwm = min_pwm
+            elif -min_pwm < right_pwm < 0:
+                right_pwm = -min_pwm
+
         cmd = f'M {left_pwm} {right_pwm}'
         if self._send_line(cmd):
             self._publish_pwm(left_pwm, right_pwm)
@@ -351,6 +368,7 @@ class ArturitoUARTBridge(Node):
     def _handle_line(self, line: str) -> None:
         prefix = None
         payload = line
+        raw_json = False
         if line.startswith(self._status_prefix):
             prefix = self._status_prefix
         elif line.startswith(self._event_prefix):
@@ -358,8 +376,11 @@ class ArturitoUARTBridge(Node):
         elif line.startswith('ERR'):
             self.get_logger().warn(f'Error from firmware: {line}')
         elif line.startswith('{') and line.endswith('}'):
+            # JSON crudo sin prefijo (lo manda el firmware actual). Lo tratamos
+            # como status pero NO se le recortan caracteres del comienzo.
             prefix = self._status_prefix
-        if prefix:
+            raw_json = True
+        if prefix and not raw_json:
             _, _, payload = line.partition(' ')
             if not payload:
                 payload = line[len(prefix) :].strip()
@@ -510,11 +531,18 @@ class ArturitoUARTBridge(Node):
         distance = self._get_float(data, ['distance_m', 'ultrasonic_m', 'ultra_m'])
         if distance is not None:
             return distance
-        distance = self._get_float(data, ['distance_cm', 'ultrasonic_cm', 'ultra_cm'])
+        # Firmware actual envía 'dist' en cm. Ojo: 0 significa "sin eco / fuera
+        # de rango" — devolvemos None para que NO se publique Range fantasma
+        # (sino el orchestrator dispararía startled pensando que hay algo a 5cm).
+        distance = self._get_float(data, ['distance_cm', 'ultrasonic_cm', 'ultra_cm', 'dist'])
         if distance is not None:
+            if distance <= 0.0:
+                return None
             return distance / 100.0
         distance = self._get_float(data, ['distance_mm', 'ultrasonic_mm', 'ultra_mm'])
         if distance is not None:
+            if distance <= 0.0:
+                return None
             return distance / 1000.0
         distance = self._get_float(data, ['distance', 'ultrasonic'])
         return distance

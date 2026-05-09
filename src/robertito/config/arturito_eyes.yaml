@@ -1,20 +1,56 @@
-arturito_eyes:
+robertito_eyes:
   ros__parameters:
+    # Hardware
     i2c_bus: 1
     left_address: 0x3C
     right_address: 0x3D
     driver: sh1106
-    default_expression: normal
-    enable_auto_blink: true
-    blink_interval_sec: 7.0
-    blink_duration_sec: 0.15
-    mirror_right: false
     brightness: 200
+    mirror_right: false
+    # OLEDs montados rotados 180° en la cabeza física → invertir framebuffer
+    # (0/1/2/3 = 0°/90°/180°/270°). 2 = 180° para corregir el montaje físico.
+    oled_rotate_left: 2
+    oled_rotate_right: 2
+
+    # Animator
+    frame_rate_hz: 20.0
+    transition_duration_ms: 200.0
+    default_expression: calma
+
+    # Blink
+    enable_auto_blink: true
+    blink_interval_sec: 4.0
+    blink_jitter_sec: 2.0
+    blink_duration_sec: 0.25
+
+    # Gaze (saccades + face tracking)
     person_detection_topic: arturito/camera/faces
-    person_expression: happy
-    person_timeout_sec: 1.0
-    sleep_expression: sleeping
-    light_state_topic: ''
-    light_state_inverted: false
+    gaze_face_timeout_s: 1.0
+    gaze_idle_freq_s: 1.8
+    gaze_idle_amp_x: 0.25
+    gaze_idle_amp_y: 0.18
+    person_locks_expression: false   # legacy: si true, cara → fuerza feliz
+
+    # Triggers
+    expression_topic: robertito/eyes_expression
+    thinking_active_topic: /behavior/thinking_active
+    wake_word_topic: /wake_word/detected
+    speaking_active_topic: /behavior/speaking_active
+    wake_pulse_duration_s: 0.4
+
+    # Light / dark mode
     light_level_topic: arturito/camera/brightness
     dark_threshold: 40.0
+
+    # Motion profiles (hooks futuros)
+    motion_request_topic: robertito/motion_request
+    head_tilt_topic: /head/tilt
+    enable_head_motion: true
+
+    # ═══════════════ DEPRECATED: la nueva arquitectura los maneja
+    # intrínsecamente — están acá solo para documentar que se removieron:
+    # sleep_expression, sleep_animation_expression_a, sleep_animation_expression_b,
+    # sleep_animation_enabled, sleep_animation_period_sec,
+    # sleep_tts_topic, sleep_tts_message,
+    # person_expression, person_timeout_sec,
+    # light_state_topic, light_state_inverted

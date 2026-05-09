@@ -11,8 +11,13 @@ from launch_ros.descriptions import ParameterValue
 def generate_launch_description() -> LaunchDescription:
     pkg_share = get_package_share_directory("robertito")
     default_uart_params = os.path.join(pkg_share, "config", "arturito_uart.yaml")
-    default_wifi_params = os.path.join(pkg_share, "config", "wifi_localization.yaml")
-    default_docking_params = os.path.join(pkg_share, "config", "docking_calibration.yaml")
+    default_face_params = os.path.join(pkg_share, "config", "arturito_camera.yaml")
+    default_behavior_params = os.path.join(pkg_share, "config", "behavior_state.yaml")
+    default_useful_memory_params = os.path.join(pkg_share, "config", "useful_memory.yaml")
+    default_family_companion_params = os.path.join(pkg_share, "config", "family_companion.yaml")
+    default_living_phrases_path = os.path.join(pkg_share, "config", "living_phrases.yaml")
+    default_eyes_params = os.path.join(pkg_share, "config", "arturito_eyes.yaml")
+    default_orchestrator_params = os.path.join(pkg_share, "config", "presence_orchestrator.yaml")
 
     startup_message_arg = DeclareLaunchArgument(
         "startup_message",
@@ -39,15 +44,30 @@ def generate_launch_description() -> LaunchDescription:
         default_value=default_uart_params,
         description="Archivo de parámetros YAML para el puente UART.",
     )
-    wifi_params_arg = DeclareLaunchArgument(
-        "wifi_params",
-        default_value=default_wifi_params,
-        description="Archivo de parámetros YAML para localización WiFi.",
+    face_params_arg = DeclareLaunchArgument(
+        "face_params",
+        default_value=default_face_params,
+        description="Archivo de parámetros YAML para el detector de rostros.",
     )
-    docking_params_arg = DeclareLaunchArgument(
-        "docking_params",
-        default_value=default_docking_params,
-        description="Archivo de parámetros YAML para la calibración de docking.",
+    behavior_params_arg = DeclareLaunchArgument(
+        "behavior_params",
+        default_value=default_behavior_params,
+        description="Archivo de parámetros YAML para el motor de estados de comportamiento.",
+    )
+    orchestrator_params_arg = DeclareLaunchArgument(
+        "orchestrator_params",
+        default_value=default_orchestrator_params,
+        description="Archivo de parámetros YAML para presence_orchestrator_node.",
+    )
+    useful_memory_params_arg = DeclareLaunchArgument(
+        "useful_memory_params",
+        default_value=default_useful_memory_params,
+        description="Archivo de parámetros YAML para memoria útil y recordatorios.",
+    )
+    family_companion_params_arg = DeclareLaunchArgument(
+        "family_companion_params",
+        default_value=default_family_companion_params,
+        description="Archivo de parámetros YAML para la capa Family Companion.",
     )
     face_detector_active_arg = DeclareLaunchArgument(
         "face_detector_start_active",
@@ -68,8 +88,11 @@ def generate_launch_description() -> LaunchDescription:
     wake_topic = "/wake_word/detected"
     assistant_say_topic = "/assistant/say"
     uart_params = LaunchConfiguration("uart_params")
-    wifi_params = LaunchConfiguration("wifi_params")
-    docking_params = LaunchConfiguration("docking_params")
+    face_params = LaunchConfiguration("face_params")
+    behavior_params = LaunchConfiguration("behavior_params")
+    orchestrator_params = LaunchConfiguration("orchestrator_params")
+    useful_memory_params = LaunchConfiguration("useful_memory_params")
+    family_companion_params = LaunchConfiguration("family_companion_params")
     startup_message = LaunchConfiguration("startup_message")
     wake_word = LaunchConfiguration("wake_word")
     mic_index = LaunchConfiguration("microphone_device_index")
@@ -84,18 +107,22 @@ def generate_launch_description() -> LaunchDescription:
         name="robertito_eyes",
         output="screen",
         parameters=[
-            {"enable_auto_blink": True},
+            default_eyes_params,  # arturito_eyes.yaml — rotate, gaze, frame_rate, etc.
+            {"enable_auto_blink": False},
             {"expression_topic": "robertito/eyes_expression"},
+            # Gaze: las pupilas siguen al rostro detectado por face_detector_node.
             {"person_detection_topic": "arturito/camera/faces"},
-            {"person_expression": "happy"},
+            {"person_expression": "normal"},
             {"person_timeout_sec": 1.0},
-            {"sleep_expression": "sleeping"},
-            {"light_level_topic": "arturito/camera/brightness"},
+            {"sleep_expression": "sleeping_breath"},
+            {"sleep_animation_expression_a": "sleeping_breath"},
+            {"sleep_animation_expression_b": "drowsy"},
+            {"light_level_topic": ""},
             {"dark_threshold": 5.0},
-            {"sleep_animation_enabled": True},
+            {"sleep_animation_enabled": False},
             {"sleep_animation_period_sec": 0.7},
             {"sleep_tts_topic": assistant_say_topic},
-            {"sleep_tts_message": "Buenas noches"},
+            {"sleep_tts_message": ""},
         ],
     )
 
@@ -110,6 +137,8 @@ def generate_launch_description() -> LaunchDescription:
             {"voice_mode": voice_mode},
             {"startup_message": startup_message},
             {"startup_delay": 0.2},
+            {"speaking_active_topic": "/behavior/speaking_active"},
+            {"health_topic": "/behavior/health/voice"},
         ],
     )
 
@@ -118,6 +147,10 @@ def generate_launch_description() -> LaunchDescription:
         executable="wake_word_listener_node",
         name="wake_word_listener",
         output="screen",
+        # Defensa en profundidad: si por cualquier motivo el listener se mata
+        # (USB glitch, watchdog interno, mic suspended), launch lo respawnea.
+        respawn=True,
+        respawn_delay=2.0,
         parameters=[
             {"wake_word": wake_word},
             {"language": "es-ES"},
@@ -125,13 +158,23 @@ def generate_launch_description() -> LaunchDescription:
             {"microphone_device_index": mic_index},
             {"energy_threshold": 180.0},
             {"dynamic_energy": True},
+            {"phrase_time_limit": 12.0},
+            {"recalibrate_interval_sec": 90.0},
+            {"microphone_reopen_interval_sec": 900.0},
             {"recognizer_backend": "google"},
             {"command_topic": "/tracker_control"},
             {"stop_phrase": "dejar de seguir"},
             {"start_phrase": "seguir"},
+            {"command_window_sec": 10.0},
+            {"direct_command_routing_enabled": True},
+            {"command_requires_wake": False},
+            {"conversation_end_phrases": "gracias,chau,listo"},
             {"wake_topic": wake_topic},
             {"tts_topic": assistant_say_topic},
-            {"tts_suppress_enabled": False},
+            {"tts_suppress_enabled": True},
+            {"recognized_text_topic": "/assistant/listen_text"},
+            {"listening_active_topic": "/behavior/listening_active"},
+            {"health_topic": "/behavior/health/wake_word"},
         ],
     )
 
@@ -141,19 +184,29 @@ def generate_launch_description() -> LaunchDescription:
         name="api_chat_node",
         output="screen",
         parameters=[
+            useful_memory_params,
+            family_companion_params,
             {"tts_topic": assistant_say_topic},
-            {"user_text_topic": "/user_text_input"},
             {"wake_topic": wake_topic},
+            {"user_text_topic": "/assistant/listen_text"},
+            {"listening_timeout_topic": "/behavior/listening_timeout"},
             {"start_active": False},
             {"enable_microphone": False},
             {"voice_mode": voice_mode},
-            {"weather_enabled": os.getenv("WEATHER_ENABLED", "false").lower() == "true"},
-            {"weather_lat": float(os.getenv("WEATHER_LAT", "0.0"))},
-            {"weather_lon": float(os.getenv("WEATHER_LON", "0.0"))},
-            {"weather_location": os.getenv("WEATHER_LOCATION", "")},
+            {"weather_enabled": os.getenv("WEATHER_ENABLED", "true").lower() == "true"},
+            {"weather_lat": float(os.getenv("WEATHER_LAT", "-34.8270"))},
+            {"weather_lon": float(os.getenv("WEATHER_LON", "-58.3930"))},
+            {"weather_location": os.getenv("WEATHER_LOCATION", "Burzaco, Buenos Aires, Argentina")},
             {"weather_unit": os.getenv("WEATHER_UNIT", "celsius")},
             {"follow_mode_topic": "/assistant/mode/follow_person"},
             {"clean_mode_topic": "/assistant/mode/cleaning_quick"},
+            {"command_topic": "/tracker_control"},
+            # Las expresiones ahora pasan por el orchestrator (no publishing directo).
+            {"orchestrator_request_topic": "/robertito/orchestrator_request"},
+            {"tilt_topic": "/head/tilt"},
+            {"thinking_active_topic": "/behavior/thinking_active"},
+            # Triggers de ground_mode y confirmaciones (editables vía YAML).
+            {"phrases_yaml_path": default_living_phrases_path},
         ],
     )
 
@@ -163,6 +216,7 @@ def generate_launch_description() -> LaunchDescription:
         name="face_detector_node",
         output="screen",
         parameters=[
+            face_params,
             {"wake_topic": wake_topic},
             {"start_active": ParameterValue(face_detector_start_active, value_type=bool)},
             {"publish_brightness": True},
@@ -179,10 +233,17 @@ def generate_launch_description() -> LaunchDescription:
             {"wake_topic": wake_topic},
             {"start_active": False},
             {"activate_on_wake": False},
-            {"expression_topic": "robertito/eyes_expression"},
+            # NOTA: person_tracker_node sigue publicando expresiones a un topic
+            # propio para no pisarse con el orchestrator. Si se quiere que el
+            # follow-mode dispare expresiones, debería migrar al
+            # orchestrator_request_topic (TODO en un refactor posterior).
+            {"expression_topic": "/_unused/person_tracker_expression"},
             {"flip_horizontal": True},
             {"command_topic": "/tracker_control"},
             {"movement_topic": "/movement_cmds"},
+            # Twist directo a /cmd_vel para que uart_bridge lo consuma.
+            # Antes apuntaba a /cmd_vel/person_track que NADIE escuchaba.
+            {"cmd_vel_topic": "/cmd_vel"},
             {"search_tilt_deg": 30.0},
             {"search_expression": "focus"},
             {"search_angular_speed": 0.35},
@@ -199,6 +260,57 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
+    behavior_params_list = [behavior_params, family_companion_params]
+    if "WEATHER_ENABLED" in os.environ:
+        behavior_params_list.append(
+            {"weather_enabled": os.getenv("WEATHER_ENABLED", "false").lower() == "true"}
+        )
+    if "WEATHER_LAT" in os.environ:
+        behavior_params_list.append({"weather_lat": float(os.getenv("WEATHER_LAT", "0.0"))})
+    if "WEATHER_LON" in os.environ:
+        behavior_params_list.append({"weather_lon": float(os.getenv("WEATHER_LON", "0.0"))})
+    if "WEATHER_LOCATION" in os.environ:
+        behavior_params_list.append({"weather_location": os.getenv("WEATHER_LOCATION", "")})
+    if "WEATHER_UNIT" in os.environ:
+        behavior_params_list.append({"weather_unit": os.getenv("WEATHER_UNIT", "celsius")})
+
+    presence_orchestrator = Node(
+        package="robertito",
+        executable="presence_orchestrator_node",
+        name="presence_orchestrator",
+        output="screen",
+        parameters=[orchestrator_params, family_companion_params],
+    )
+
+    behavior_state = Node(
+        package="robertito",
+        executable="behavior_state_node",
+        name="behavior_state_node",
+        output="screen",
+        parameters=behavior_params_list,
+    )
+
+    # Modo limpieza rápida: subscribe a /assistant/mode/cleaning_quick
+    # y maneja aspiradora/escobillas + navegación evitando obstáculos.
+    clean_quick = Node(
+        package="robertito",
+        executable="clean_quick_node",
+        name="clean_quick",
+        output="screen",
+        parameters=[
+            {"mode_topic": "/assistant/mode/cleaning_quick"},
+            {"cmd_vel_topic": "arturito/cmd_vel_clean"},
+            {"max_speed_mps": 0.18},
+            # CRÍTICO: arrancar en INACTIVO. El default del nodo es True
+            # y eso causaba que limpieza arranque sola al boot.
+            {"mode_enabled": False},
+            # Tilt durante limpieza: 60° hacia arriba (default era 45°).
+            # Lo re-publica periódicamente para mantenerlo estable aunque
+            # otra cosa lo cambie.
+            {"tilt_active_deg": 60.0},
+        ],
+    )
+
     uart_bridge = Node(
         package="robertito",
         executable="uart_node",
@@ -212,44 +324,17 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
-    docking_localization = Node(
-        package="robertito",
-        executable="docking_calibration_node",
-        name="docking_calibration_node",
-        output="screen",
-        parameters=[docking_params],
-    )
-
-    wifi_localization = Node(
-        package="robertito",
-        executable="wifi_localization_node",
-        name="wifi_localization_node",
-        output="screen",
-        parameters=[wifi_params],
-    )
-
-    node_manager = Node(
-        package="robertito",
-        executable="node_manager",
-        name="robertito_node_manager",
-        output="screen",
-        parameters=[
-            {"wake_topic": wake_topic},
-            {"eyes_expression_topic": "robertito/eyes_expression"},
-            {"tts_topic": assistant_say_topic},
-            {"startup_greeting": startup_greeting},
-            {"wake_greeting": "Hola, ¿en qué puedo ayudarte?"},
-        ],
-    )
-
     ld = LaunchDescription()
     ld.add_action(startup_message_arg)
     ld.add_action(wake_word_arg)
     ld.add_action(mic_index_arg)
     ld.add_action(uart_start_enabled_arg)
     ld.add_action(uart_params_arg)
-    ld.add_action(wifi_params_arg)
-    ld.add_action(docking_params_arg)
+    ld.add_action(face_params_arg)
+    ld.add_action(behavior_params_arg)
+    ld.add_action(orchestrator_params_arg)
+    ld.add_action(useful_memory_params_arg)
+    ld.add_action(family_companion_params_arg)
     ld.add_action(face_detector_active_arg)
     ld.add_action(voice_mode_arg)
     ld.add_action(startup_greeting_arg)
@@ -259,8 +344,8 @@ def generate_launch_description() -> LaunchDescription:
     ld.add_action(api_chat)
     ld.add_action(face_detector)
     ld.add_action(person_tracker)
+    ld.add_action(presence_orchestrator)
+    ld.add_action(behavior_state)
+    ld.add_action(clean_quick)
     ld.add_action(uart_bridge)
-    ld.add_action(wifi_localization)
-    ld.add_action(docking_localization)
-    ld.add_action(node_manager)
     return ld

@@ -6,11 +6,35 @@ arturito_face_detector:
     frame_rate: 15.0
     frame_id: arturito_camera
     cascade_path: ""
-    scale_factor: 1.1
-    min_neighbors: 5
-    min_size_px: 30
+    # Antes: scale_factor 1.1, min_neighbors 5, min_size 30 → estricto.
+    # Para iluminación pobre relajamos: más ventanas, menos vecinos exigidos,
+    # cara más chica aceptable. Da algunos falsos positivos pero los rebaja
+    # CLAHE+gamma. Si aparecen demasiadas falsas detecciones, subí
+    # min_neighbors a 4-5 de nuevo.
+    scale_factor: 1.08
+    min_neighbors: 3
+    min_size_px: 24
     publish_annotated_image: true
     annotated_topic: arturito/camera/faces/image
     detection_topic: arturito/camera/faces
     publish_brightness: true
     brightness_topic: arturito/camera/brightness
+
+    # ─── Pre-procesado para baja iluminación ───
+    # CLAHE: equalización local de contraste. Mejora detección de caras en
+    # sombra sin saturar zonas claras. Gratis (~0.5ms en Pi 5).
+    enable_clahe: true
+    clahe_clip_limit: 2.5
+    clahe_tile_grid: 8
+    # Si el frame está oscuro (mean < threshold), aplicamos gamma para
+    # levantar medios tonos antes del CLAHE. Valor > 1 = aclara.
+    dark_gamma_threshold: 60.0
+    dark_gamma_value: 1.6
+
+    # ─── V4L2: ajustes de cámara para low-light ───
+    # -1 = no tocar (mantiene defaults). Rangos típicos webcam 0..255.
+    # auto_exposure: 1 = manual, 3 = aperture priority (default ideal).
+    cam_auto_exposure: 3
+    cam_brightness: 128
+    cam_gain: 200
+    cam_contrast: 128

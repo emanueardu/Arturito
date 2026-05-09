@@ -6,7 +6,11 @@ package_name = 'robertito'
 setup(
     name=package_name,
     version='0.0.1',
-    packages=[package_name],
+    packages=[
+        package_name,
+        package_name + '.eyes',
+        package_name + '.orchestrator',
+    ],
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
@@ -30,12 +34,11 @@ setup(
             'uart_node = robertito.uart_node:main',
             'face_detector_node = robertito.face_detector_node:main',
             'person_tracker_node = robertito.person_tracker_node:main',
-            'face_greeter_node = robertito.face_greeter_node:main',
             'teleop_node = robertito.teleop_node:main',
-            'wake_word_node = robertito.wake_word_node:main',
             'wake_word_listener_node = robertito.wake_word_listener_node:main',
             'api_chat_node = robertito.api_chat_node:main',
-            'node_manager = robertito.node_manager:main',
+            'behavior_state_node = robertito.behavior_state_node:main',
+            'presence_orchestrator_node = robertito.presence_orchestrator_node:main',
             'wander_avoid_node = robertito.wander_avoid_node:main',
             'clean_quick_node = robertito.clean_quick_node:main',
             'twist_mux_node = robertito.twist_mux_node:main',

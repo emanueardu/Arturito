@@ -3,22 +3,35 @@ voice_synth_node:
     input_topic: /assistant/say
     voice_mode: jarvis
     language: es-AR
-    rate: 0.72
-    pitch: -2st
-    pause_short_ms: 600
-    pause_medium_ms: 900
-    tts_provider: azure
-    supports_ssml: true
-    use_ssml: true
-    enable_ssml: true
-    voice_name: es-AR-TomasNeural
-    tts_rate: 0.90
-    tts_pitch: -1st
-    tts_output_format: Riff24Khz16BitMonoPcm
-    env_file: /home/robot/.config/robertito.env
+
+    tts_provider: elevenlabs
+
+    # ElevenLabs config (voz "Will" — joven, cálida)
+    elevenlabs_voice_id: "bIHbv24MWmeRgasZH58o"
+    elevenlabs_model_id: "eleven_multilingual_v2"
+    elevenlabs_api_key_file: "/home/robot/.config/robertito/elevenlabs.env"
+    fallback_tts_provider: piper
+
+    supports_ssml: false
+    use_ssml: false
+    enable_ssml: false
+
     audio_backend: sounddevice
     audio_device: default
-    play_command: "/usr/bin/paplay {wav}"
+    play_command: "internal"
+
+    rate: 1.0
+    pitch: "0"
+
     piper_dir: /home/robot/ros2_ws/piper
-    piper_sentence_silence: 0.3
+    piper_sentence_silence: 0.12
+
     cache_enabled: true
+
+    # Pre-pad de silencio antes de cada frase si el stream estuvo idle.
+    # Combinado con el keepalive interno del audio_player (que escribe
+    # silencio continuo al stream para mantener despierto al speaker BT
+    # a nivel hardware), esto hace que las primeras sílabas NO se corten.
+    # Si el comienzo aún se pierde a veces, subí lead_in_silence_s a 0.7.
+    lead_in_silence_s: 0.5
+    lead_in_idle_threshold_s: 3.0

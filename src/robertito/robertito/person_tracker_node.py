@@ -24,7 +24,7 @@ class ArturitoPersonTracker(Node):
             self.declare_parameter('detection_topic', 'arturito/camera/faces').value
         )
         self._expression_topic = str(
-            self.declare_parameter('expression_topic', 'arturito/eyes_expression').value
+            self.declare_parameter('expression_topic', 'robertito/eyes_expression').value
         )
         self._follow_mode_topic = str(
             self.declare_parameter(

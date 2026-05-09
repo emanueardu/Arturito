@@ -36,6 +36,7 @@ class TwistMux(Node):
         default_inputs = [
             {'name': 'safety', 'topic': '/cmd_vel/safety_stop', 'priority': 30, 'timeout': 0.5},
             {'name': 'nav2', 'topic': '/cmd_vel/nav2', 'priority': 20, 'timeout': 0.5},
+            {'name': 'presence_reaction', 'topic': '/cmd_vel/presence_reaction', 'priority': 12, 'timeout': 0.5},
             {'name': 'person_track', 'topic': '/cmd_vel/person_track', 'priority': 10, 'timeout': 0.5},
             {'name': 'wander', 'topic': '/cmd_vel/wander', 'priority': 5, 'timeout': 0.5},
             {'name': 'teleop', 'topic': '/cmd_vel/teleop', 'priority': 4, 'timeout': 0.5},

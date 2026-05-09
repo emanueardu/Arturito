@@ -1,10 +1,14 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
+from ament_index_python.packages import get_package_share_directory
 from launch_ros.actions import Node
 
 
 def generate_launch_description() -> LaunchDescription:
+    pkg_share = get_package_share_directory("robertito")
+    useful_memory_params = f"{pkg_share}/config/useful_memory.yaml"
+    family_companion_params = f"{pkg_share}/config/family_companion.yaml"
     sensitivity_arg = DeclareLaunchArgument("sensitivity", default_value="0.6")
     vad_silence_arg = DeclareLaunchArgument("vad_silence_ms", default_value="800")
     vad_aggressiveness_arg = DeclareLaunchArgument("vad_aggressiveness", default_value="2")
@@ -42,6 +46,12 @@ def generate_launch_description() -> LaunchDescription:
             {"sample_rate": 16000},
             {"chunk_size": 1024},
             {"wake_topic": "/wake_word/detected"},
+            {"tts_topic": "/assistant/say"},
+            {"tts_suppress_enabled": True},
+            {"recognized_text_topic": "/assistant/listen_text"},
+            {"direct_command_routing_enabled": False},
+            {"listening_active_topic": "/behavior/listening_active"},
+            {"listening_timeout_topic": "/behavior/listening_timeout"},
         ],
     )
 
@@ -51,7 +61,11 @@ def generate_launch_description() -> LaunchDescription:
         name="api_chat_node",
         output="screen",
         parameters=[
+            useful_memory_params,
+            family_companion_params,
             {"wake_topic": "/wake_word/detected"},
+            {"user_text_topic": "/assistant/listen_text"},
+            {"listening_timeout_topic": "/behavior/listening_timeout"},
             {"stt_mode": stt_mode},
             {"voice_mode": voice_mode},
             {"audio_backend": audio_backend},
@@ -62,6 +76,11 @@ def generate_launch_description() -> LaunchDescription:
             {"startup_message": startup_message},
             {"startup_delay": startup_delay},
             {"external_tts": True},
+            {"enable_microphone": False},
+            {"command_topic": "/tracker_control"},
+            # Las expresiones se piden vía orchestrator request bus.
+            {"orchestrator_request_topic": "/robertito/orchestrator_request"},
+            {"tilt_topic": "/head/tilt"},
         ],
     )
 
