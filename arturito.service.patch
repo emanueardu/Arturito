@@ -1,0 +1,6 @@
+*** Begin Patch
+*** Update File: /etc/systemd/system/arturito.service
+@@
+ RestartSec=5
++ExecStopPost=/bin/rm -f /tmp/robot_auto.launch.lock
+*** End Patch
