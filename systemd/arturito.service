@@ -1,16 +1,21 @@
 [Unit]
 Description=Stack principal del robot (Robertito + web bridge)
-After=network-online.target sound.target
-Wants=network-online.target
+After=network-online.target sound.target bt-audio-ensure.service
+Wants=network-online.target bt-audio-ensure.service
+Requires=bt-audio-ensure.service
 
 [Service]
 Type=simple
+User=robot
 WorkingDirectory=/home/robot/ros2_ws
 EnvironmentFile=/home/robot/.config/robertito.env
+Environment=ROS_DOMAIN_ID=10
 Environment=HOME=/home/robot
 Environment=PYTHONUNBUFFERED=1
 Environment=XDG_RUNTIME_DIR=/run/user/1000
 Environment=PULSE_SERVER=unix:/run/user/1000/pulse/native
+# Final health-check: verify audio sink before starting ROS
+ExecStartPre=/usr/local/bin/check-audio-sink.sh 30
 ExecStart=/home/robot/ros2_ws/scripts/start_arturito.sh
 Restart=on-failure
 RestartSec=5

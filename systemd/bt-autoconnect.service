@@ -1,0 +1,20 @@
+[Unit]
+Description=Ensure the Bluetooth speaker is connected early in boot
+After=bluetooth.service
+Wants=bluetooth.service
+Before=bt-audio-ensure.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=CONNECT_ONLY=1
+EnvironmentFile=-/etc/default/bt-audio-ensure
+ExecStartPre=/usr/local/bin/wait-for-user-audio-ready.sh
+ExecStart=/usr/local/bin/ensure_bt_a2dp_sink.sh
+Restart=on-failure
+RestartSec=3
+StartLimitIntervalSec=0
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

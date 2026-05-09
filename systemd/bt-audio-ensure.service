@@ -1,0 +1,24 @@
+[Unit]
+Description=Ensure Bluetooth A2DP sink is ready before Robertito starts
+After=bluetooth.service network-online.target bt-autoconnect.service
+Wants=bluetooth.service bt-autoconnect.service
+Before=arturito.service
+Requires=bluetooth.service
+Wants=user@1000.service robot-user-manager.service
+After=user@1000.service robot-user-manager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/ensure_bt_a2dp_sink.sh
+TimeoutStartSec=120
+User=robot
+Environment=HOME=/home/robot
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+Environment=PULSE_SERVER=unix:/run/user/1000/pulse/native
+Environment=TARGET_USER=robot
+EnvironmentFile=-/etc/default/bt-audio-ensure
+
+[Install]
+WantedBy=multi-user.target

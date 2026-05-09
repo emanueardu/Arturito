@@ -1,0 +1,11 @@
+[Unit]
+Description=Start robot user manager early for Bluetooth audio
+Before=bt-audio-ensure.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl --no-block start user@1000.service
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
