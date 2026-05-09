@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>robertito_face_recognition</name>
+  <version>0.1.0</version>
+  <description>Reconocimiento facial para el robot Robertito.</description>
+  <maintainer email="robot@localhost">Robertito Team</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+  <build_depend>rosidl_default_generators</build_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>face_recognition</exec_depend>
+  <exec_depend>numpy</exec_depend>
+  <exec_depend>opencv-python</exec_depend>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
