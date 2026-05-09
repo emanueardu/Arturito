@@ -47,3 +47,6 @@ yarn-error.log*
 .codex-backups/
 *.bak_*
 
+# Reportes temporales
+robertito_audit.md
+
