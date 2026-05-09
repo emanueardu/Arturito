@@ -1,0 +1,263 @@
+presence_orchestrator:
+  ros__parameters:
+
+    # ═════════════════ TOPICS ═════════════════
+    eyes_expression_topic: robertito/eyes_expression
+    tts_topic: /assistant/say
+    head_tilt_topic: /head/tilt
+    cmd_vel_topic: /cmd_vel
+    face_detection_topic: arturito/camera/faces
+    brightness_topic: arturito/camera/brightness
+    ultrasonic_topic: arturito/ultrasonic
+    bumper_left_topic: arturito/bumper_left
+    bumper_right_topic: arturito/bumper_right
+    cliff_topic: arturito/cliff
+    imu_topic: arturito/imu
+    wake_word_topic: /wake_word/detected
+    speaking_active_topic: /behavior/speaking_active
+    ground_mode_topic: /robertito/ground_mode
+    orchestrator_request_topic: /robertito/orchestrator_request
+
+    # ═════════════════ PERSISTENCIA ═════════════════
+    state_file: /home/robot/.ros/robertito_orchestrator_state.json
+
+    # ═════════════════ TIMINGS ESTADOS (segundos) ═════════════════
+    no_face_to_idle_s: 60
+    no_face_to_drowsy_s: 300
+    no_face_to_sleeping_s: 1800
+    fsm_tick_period_s: 0.5
+
+    # ═════════════════ GREETINGS POR AUSENCIA ═════════════════
+    # Solo saluda si la ausencia fue larga: 20 min para casual, 1h para
+    # el efusivo. Si te alejás un ratito y volvés, NO te saluda.
+    greeting_casual_threshold_s: 1200    # 20 minutos
+    greeting_efusivo_threshold_s: 3600   # 1 hora
+    greeting_efusivo_cooldown_s: 3600
+    greeting_casual_cooldown_s: 1800
+
+    # ═════════════════ DAILY GREETING ═════════════════
+    daily_greeting_enabled: true
+    daily_greeting_start_hour: 6
+    daily_greeting_end_hour: 11
+
+    # ═════════════════ DESPEDIDA ESCOLAR (lun-vie 7:20) ═════════════════
+    school_farewell_enabled: true
+    school_farewell_hour: 7
+    school_farewell_minute: 20
+    # Ventana en minutos para disparar (a partir de hour:minute, durante N min).
+    school_farewell_window_min: 15
+    # Solo de lunes a viernes (1=lun..7=dom).
+    school_farewell_weekdays: [1, 2, 3, 4, 5]
+    # Frases base (random); se les agrega el tip de abrigo si está fresco.
+    school_farewell_cold_threshold_c: 14.0
+    school_farewell_cold_tip: "Está fresco, abríguense bien."
+
+    # ═════════════════ CLIMA (Burzaco, Buenos Aires, Argentina) ═════════════════
+    weather_enabled: true
+    weather_lat: -34.8270
+    weather_lon: -58.3930
+    weather_unit: celsius
+    weather_timezone: America/Argentina/Buenos_Aires
+    weather_timeout_s: 6.0
+    # Cache: refetch cada N segundos (3600 = 1h)
+    weather_cache_s: 1800.0
+
+    # ═════════════════ MEMORIA / RECORDATORIOS ═════════════════
+    memory_file: /home/robot/.ros/robertito_memory.json
+    memory_timezone: America/Argentina/Buenos_Aires
+    morning_reminders_limit: 5
+
+    # ═════════════════ TILT INICIAL ═════════════════
+    # Se publica al boot para que la cámara apunte hacia donde suele
+    # haber caras (positivo = arriba). Tunealo si las caras no se detectan.
+    default_tilt_deg: 25.0
+    default_tilt_delay_s: 3.0
+
+    # ═════════════════ BEDTIME ═════════════════
+    bedtime_enabled: true
+    bedtime_start_hour: 23
+    # Hora hasta la que (matutina) sigue contando como "noche" para los
+    # ojos de "dormido". Ej: 6 = considera noche entre 23 y 06.
+    bedtime_end_hour: 6
+    # Threshold del trigger de bedtime announce (frase + transición FSM).
+    # Con la cámara boosteada (gain alta) los valores de "oscuro real"
+    # caen alrededor de 50-70, no <40 como con cámara stock.
+    bedtime_brightness_threshold: 70.0
+    bedtime_brightness_consistent_s: 20.0
+    # ─── Garantía visual "dormido en oscuridad + noche" ───
+    # Independiente del trigger bedtime: aunque ya hayamos anunciado
+    # buenas noches, los ojos siguen mostrando "dormido" mientras
+    # las condiciones físicas se mantengan. Republica cada N segundos
+    # para sobreescribir publicaciones externas.
+    sleep_eyes_brightness_threshold: 70.0
+    sleep_eyes_republish_s: 5.0
+    # Cooldown runtime de defensa: incluso si la persistencia falla, no se
+    # vuelve a anunciar bedtime hasta pasados estos segundos.
+    bedtime_cooldown_s: 600.0
+    # Mismo concepto para el daily greeting.
+    daily_greeting_cooldown_s: 600.0
+    # Tras "buenas noches" la FSM queda forzada en SLEEPING durante este
+    # tiempo (default 8h ≈ duración de la noche). El daily_greeting matutino
+    # también libera este lock automáticamente.
+    bedtime_sleep_lock_s: 28800.0
+    # Demora desde que termina la frase de buenas noches hasta que los
+    # ojos pasan de "feliz" a "dormido".
+    bedtime_settle_delay_s: 3.0
+
+    # ═════════════════ ENGAGED — micro-comportamientos ═════════════════
+    # Las micro-expresiones SIN VOZ se mantienen (cara que cambia para dar
+    # vida). Las frases random fueron deshabilitadas: si el robot ve a
+    # alguien y empieza a "tirar frases sin sentido" mientras estás
+    # presente, eso molesta. Solo habla en momentos significativos
+    # (saludos por ausencia larga, triggers, modos por voz).
+    engaged_micro_expr_min_s: 12.0
+    engaged_micro_expr_max_s: 20.0
+    engaged_micro_expr_probability: 0.6
+    engaged_micro_expr_duration_s: 4.0
+    engaged_micro_expr_pool: [feliz, picaron, corazones, sorprendido]
+    engaged_micro_motion_min_s: 30.0
+    engaged_micro_motion_max_s: 60.0
+    engaged_micro_motion_probability: 0.3
+    engaged_micro_motion_pool: [mini_spin_left, mini_spin_right, tilt_random, tiny_advance]
+
+    # ═════════════════ ENGAGED — preguntas proactivas ═════════════════
+    # DESHABILITADO: probabilidad 0 → nunca dispara. Si querés que el
+    # robot vuelva a preguntar cosas mientras te ve, subí esto a 0.5-0.8.
+    engaged_question_min_s: 60.0
+    engaged_question_max_s: 150.0
+    engaged_question_probability: 0.0
+    engaged_question_duration_s: 6.0
+    # Expresiones acompañantes (rotan random):
+    engaged_question_expr_pool: [atento, picaron, feliz, corazones]
+
+    # ═════════════════ IDLE ═════════════════
+    idle_lookaround_min_s: 30.0
+    idle_lookaround_max_s: 60.0
+    idle_sigh_min_s: 120.0
+    idle_sigh_max_s: 240.0
+
+    # ═════════════════ TRIGGERS ═════════════════
+    # Cada gesto es SIMÉTRICO (vuelve a la pose inicial), así que estos
+    # valores se ejecutan en cada sentido. Mantenelos chicos para que la
+    # interacción se sienta sutil, no aparatosa.
+    bump_cooldown_s: 2.0
+    bump_reverse_distance_m: 0.04
+    bump_spin_angle_deg: 15.0
+
+    startled_distance_min_cm: 5.0
+    startled_distance_max_cm: 25.0
+    startled_cooldown_s: 5.0
+    startled_retreat_distance_m: 0.06
+
+    shaken_imu_threshold_g: 1.5
+    shaken_imu_release_g: 0.8
+    shaken_min_duration_s: 0.5
+    shaken_release_duration_s: 1.0
+    shaken_cooldown_s: 3.0
+
+    cliff_cooldown_s: 3.0
+    cliff_reverse_distance_m: 0.08
+
+    wake_pulse_duration_s: 0.4
+
+    # ═════════════════ POOLS DE FRASES ═════════════════
+    tts_daily_greeting:
+      - "Buenos días, qué bueno verte"
+      - "Hola, buenos días"
+      - "Buen día, ya estoy despierto"
+    tts_greeting_efusivo:
+      - "Hey! Volviste! Cuánto tiempo"
+      - "Te extrañé, ahí estás"
+      - "Ey ey ey, volviste"
+      - "Qué bueno que volviste"
+    tts_greeting_casual:
+      - "Ahí estás"
+      - "Volviste"
+      - "Hola de nuevo"
+      - "Acá estás"
+    tts_micro_expr:
+      - "Hmm"
+      - "Ahá"
+      - "Ah"
+      - "Eso"
+      - "Mira esto"
+      - "Sí"
+    tts_idle_sigh:
+      - "Hmmm"
+      - "Uff"
+      - "Acá estoy"
+      - "Esperando"
+    tts_bump:
+      - "Ay"
+      - "Ouch"
+      - "Cuidado por dónde voy"
+      - "Eh"
+    tts_startled:
+      - "Cuidado, dame espacio"
+      - "Ey, demasiado cerca"
+      - "Disculpa, retrocedo"
+      - "Estás muy cerca"
+    tts_shaken:
+      - "Jaja basta"
+      - "Ey, no me sacudas"
+      - "Para, para"
+      - "Ya, suéltame"
+    tts_cliff:
+      - "Escalón"
+      - "Cuidado, hay un borde"
+    tts_wake_ack:
+      - "Sí"
+      - "Te escucho"
+      - "Decime"
+      - "Acá estoy"
+    tts_bedtime:
+      - "Hora de dormir, buenas noches"
+      - "Hasta mañana, me apago un rato"
+      - "A descansar, buenas noches"
+    tts_school_farewell:
+      - "Que tengan un lindo día en el cole"
+      - "Que les vaya genial hoy en clase"
+      - "Lleven todo, que sea un buen día"
+      - "Disfruten el cole, hasta la tarde"
+      - "Buen día de cole, aprendan mucho"
+    tts_engaged_questions:
+      - "¿En qué andás?"
+      - "¿Cómo va el día?"
+      - "Contame algo"
+      - "¿Qué estás haciendo?"
+      - "¿Necesitás algo?"
+      - "¿Todo bien por ahí?"
+      - "¿Querés hacer algo?"
+      - "¿Tenés un rato para charlar?"
+      - "¿Qué tal todo?"
+      - "Decime, ¿cómo estás?"
+
+    # Probabilidad de que la micro-expresión venga acompañada de una frase
+    # TTS ("Hmm", "Ahá", etc). Lo dejamos en 0 para que mientras te ve
+    # solo cambien los ojos, sin hablar. Subir si querés voces random.
+    micro_expr_tts_probability: 0.0
+    # Suspiros random cuando NO ve a nadie (estado IDLE). También en 0.
+    idle_sigh_tts_probability: 0.0
+
+    # ═════════════════ EXPRESIONES POR ESTADO ═════════════════
+    expr_engaged: calma
+    expr_idle: calma
+    expr_drowsy: dormitando
+    expr_sleeping: dormido
+    expr_working: atento
+    expr_greeting_efusivo: corazones
+    expr_greeting_casual: feliz
+    expr_daily_greeting: feliz
+    expr_bedtime: feliz
+    expr_bump: sorprendido
+    expr_startled: sorprendido
+    expr_shaken: risa_fuerte
+    expr_cliff: sorprendido
+    expr_wake_ack: atento
+
+    # ═════════════════ MOTOR ═════════════════
+    motor_linear_speed_mps: 0.15
+    motor_angular_speed_radps: 0.5
+
+    # ═════════════════ RESPETO A EXTERNOS ═════════════════
+    external_expression_respect_s: 10
