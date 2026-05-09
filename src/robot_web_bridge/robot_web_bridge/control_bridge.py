@@ -47,6 +47,9 @@ class ControlBridgeNode(Node):
                 'head_tilt_topic', _env_str('HEAD_TILT_TOPIC', '/head/tilt')
             ).value
         )
+        self._tilt_command_dedupe_window_sec = float(
+            self.declare_parameter('tilt_command_dedupe_window_sec', 0.25).value
+        )
         self._tilt_prefix = str(
             self.declare_parameter(
                 'tilt_command_prefix', _env_str('TILT_COMMAND_PREFIX', 't')
@@ -134,8 +137,12 @@ class ControlBridgeNode(Node):
         self._head_tilt_pub = self.create_publisher(Float32, self._head_tilt_topic, qos)
         self._tts_pub = self.create_publisher(String, self._tts_topic, qos)
         self.create_subscription(Float32, self._tilt_input_topic, self._on_tilt_msg, qos)
+        self.create_subscription(Float32, self._head_tilt_topic, self._on_head_tilt_msg, qos)
+        self._last_forwarded_tilt: float | None = None
+        self._last_forwarded_tilt_at: float = 0.0
         self.get_logger().info(
-            f'Bridge de tilt listo: escuchando {self._tilt_input_topic} y enviando a {self._movement_topic}.'
+            f'Bridge de tilt listo: escuchando {self._tilt_input_topic} y {self._head_tilt_topic}, '
+            f'enviando a {self._movement_topic}.'
         )
 
         self._vacuum_pub = self.create_publisher(Bool, self._vacuum_passthrough_topic, qos)
@@ -182,11 +189,26 @@ class ControlBridgeNode(Node):
 
     # region Tilt -----------------------------------------------------------
     def _on_tilt_msg(self, msg: Float32) -> None:
-        target = float(msg.data)
+        self._forward_tilt_command(float(msg.data), publish_head_tilt=True)
+
+    def _on_head_tilt_msg(self, msg: Float32) -> None:
+        self._forward_tilt_command(float(msg.data), publish_head_tilt=False)
+
+    def _forward_tilt_command(self, target: float, *, publish_head_tilt: bool) -> None:
         clamped = max(self._tilt_min, min(self._tilt_max, target))
+        now = time.monotonic()
+        if (
+            self._last_forwarded_tilt is not None
+            and abs(self._last_forwarded_tilt - clamped) < 0.05
+            and (now - self._last_forwarded_tilt_at) < self._tilt_command_dedupe_window_sec
+        ):
+            return
         command = f'{self._tilt_prefix}{int(round(clamped))}'
         self._movement_pub.publish(String(data=command))
-        self._head_tilt_pub.publish(Float32(data=clamped))
+        if publish_head_tilt:
+            self._head_tilt_pub.publish(Float32(data=clamped))
+        self._last_forwarded_tilt = clamped
+        self._last_forwarded_tilt_at = now
         self.get_logger().debug(f'Comando tilt -> {command}')
 
     # region Vacuum / brush -------------------------------------------------
