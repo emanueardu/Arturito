@@ -1,0 +1,155 @@
+behavior_state_node:
+  ros__parameters:
+    enabled: true
+
+    expression_topic: robertito/eyes_expression
+    tilt_topic: /head/tilt
+    state_topic: /behavior/state
+    error_reason_topic: /behavior/error_reason
+
+    presence_active_topic: /behavior/presence_active
+    listening_active_topic: /behavior/listening_active
+    speaking_active_topic: /behavior/speaking_active
+    wake_health_topic: /behavior/health/wake_word
+    voice_health_topic: /behavior/health/voice
+
+    light_level_topic: arturito/camera/brightness
+    light_dark_threshold: 5.0
+    use_light_night_override: true
+    darkness_behavior_enabled: true
+    night_start_hour: 23
+    night_end_hour: 4
+    darkness_debounce_sec: 1.0
+    occlusion_recovery_sec: 2.5
+    daytime_occlusion_cooldown_sec: 180.0
+    nighttime_good_night_cooldown_sec: 1800.0
+    night_phrase_pool:
+      - "Buenas noches"
+      - "Ya es hora de descansar."
+    daytime_occlusion_phrase_pool:
+      - "¿Quién está ahí?"
+      - "Salí de adelante mío."
+      - "Ehh, me tapaste."
+      - "No veo nada."
+      - "Veo oscuridad."
+      - "Corréte un poquito."
+      - "¿Quién me está tapando?"
+      - "Che, no veo."
+
+    priority_order:
+      - error
+      - speaking
+      - listening
+      - presence
+      - night
+      - idle
+
+    idle_gesture_enabled: true
+    idle_gesture_min_interval_sec: 18.0
+    idle_gesture_max_interval_sec: 40.0
+    idle_tilt_probability: 0.35
+    idle_tilt_min_deg: -3.0
+    idle_tilt_max_deg: 3.0
+    idle_tilt_hold_sec: 1.2
+    idle_expression_pool:
+      - normal
+      - focus
+      - happy
+
+    listening_expression: focus
+    speaking_expression: happy
+    presence_expression_strategy: external
+    presence_expression: focus
+
+    night_expression_pool:
+      - sleepy_soft
+      - drowsy
+      - sleeping_breath
+    night_idle_interval_scale: 2.0
+    error_expression: confused
+    health_timeout_sec: 12.0
+    health_startup_grace_sec: 20.0
+
+    network_check_enabled: true
+    network_check_host: 1.1.1.1
+    network_check_port: 53
+    network_check_timeout_sec: 1.5
+    network_check_interval_sec: 30.0
+
+    proactive_enabled: false
+    proactive_tts_topic: /assistant/say
+    proactive_state_file_path: ~/.ros/robertito_proactive_state.json
+    proactive_global_cooldown_sec: 300.0
+    proactive_boot_delay_sec: 12.0
+    proactive_idle_return_min_absence_sec: 2700.0
+    proactive_presence_prompt_delay_sec: 4.0
+    proactive_listening_timeout_delay_sec: 1.2
+    proactive_recovery_delay_sec: 2.0
+    proactive_system_ok_min_uptime_sec: 21600.0
+    proactive_daily_greeting_block_sec: 20.0
+    proactive_allow_weather_placeholders: false
+    listening_timeout_topic: /behavior/listening_timeout
+    daily_greeting_event_topic: /behavior/daily_greeting_emitted
+
+    proactive_categories:
+      boot_ready:
+        enabled: true
+        cooldown_sec: 0.0
+        daily_max: 1
+        phrases:
+          - "Sistema iniciado. Estoy listo."
+          - "Inicio completo. Todo preparado."
+      audio_recovered:
+        enabled: true
+        cooldown_sec: 1800.0
+        daily_max: 3
+        phrases:
+          - "Audio listo nuevamente."
+          - "Recuperé el audio."
+      network_recovered:
+        enabled: true
+        cooldown_sec: 1800.0
+        daily_max: 3
+        phrases:
+          - "Conexión recuperada."
+          - "La red volvió a estar disponible."
+      first_person_today:
+        enabled: false
+        cooldown_sec: 43200.0
+        daily_max: 1
+        phrases:
+          - "Buen {time_of_day}. Qué bueno verte."
+          - "Hola. Me alegra encontrarte esta {time_of_day}."
+      idle_return:
+        enabled: true
+        cooldown_sec: 3600.0
+        daily_max: 3
+        phrases:
+          - "Hola, estuve en espera."
+          - "Te estaba esperando."
+          - "Hola. Seguía atento por acá."
+      listening_timeout:
+        enabled: false
+        cooldown_sec: 1800.0
+        daily_max: 3
+        phrases:
+          - "Te escucho."
+          - "Cuando quieras."
+          - "Sigo atento."
+      evening_notice:
+        enabled: true
+        cooldown_sec: 21600.0
+        daily_max: 1
+        phrases:
+          - "Parece que ya es de noche."
+          - "La noche ya llegó. Sigo atento."
+      system_ok:
+        enabled: false
+        cooldown_sec: 43200.0
+        daily_max: 1
+        phrases:
+          - "Todo sigue funcionando bien."
+          - "Todo se mantiene en orden."
+
+    state_tick_sec: 0.2
+    verbose_logging: false

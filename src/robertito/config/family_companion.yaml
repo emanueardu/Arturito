@@ -1,0 +1,102 @@
+behavior_state_node:
+  ros__parameters:
+    family_companion_enabled: true
+
+    family_morning_enabled: true
+    family_morning_start_hour: 6
+    family_morning_end_hour: 11
+    family_morning_greetings:
+      - "Buen día."
+      - "Buen día, che."
+      - "Hola, buen día."
+
+    quiet_hours_start_hour: 22
+    quiet_hours_end_hour: 7
+    proactive_window_sec: 3600.0
+    proactive_max_comments_per_window: 3
+    allow_reminders_in_quiet_hours: false
+
+    family_reminders_enabled: true
+    memory_store_path: ~/.ros/robertito_memory_store.json
+    reminder_check_interval_sec: 10.0
+    due_reminder_repeat_interval_sec: 0.0
+    max_due_announcements: 1
+    user_name: Emanuel
+    due_reminder_templates:
+      - "Acordate de {text}."
+      - "{user_name}, acordate de {text}."
+      - "Che, no te olvides de {text}."
+
+    proactive_categories:
+      boot_ready:
+        enabled: false
+        cooldown_sec: 0.0
+        daily_max: 0
+        phrases: []
+      audio_recovered:
+        enabled: false
+        cooldown_sec: 1800.0
+        daily_max: 0
+        phrases: []
+      network_recovered:
+        enabled: false
+        cooldown_sec: 1800.0
+        daily_max: 0
+        phrases: []
+      family_morning_greeting:
+        enabled: true
+        cooldown_sec: 43200.0
+        daily_max: 1
+        phrases:
+          - "Buen día."
+      idle_return:
+        enabled: false
+        cooldown_sec: 3600.0
+        daily_max: 0
+        phrases: []
+      listening_timeout:
+        enabled: false
+        cooldown_sec: 1800.0
+        daily_max: 0
+        phrases: []
+      evening_notice:
+        enabled: true
+        cooldown_sec: 21600.0
+        daily_max: 1
+        phrases:
+          - "Ya es bastante tarde."
+          - "Se hizo tarde, sigo tranquilito por acá."
+      system_ok:
+        enabled: false
+        cooldown_sec: 43200.0
+        daily_max: 0
+        phrases: []
+      reminder_due:
+        enabled: true
+        cooldown_sec: 90.0
+        daily_max: 12
+        phrases:
+          - "Acordate de eso."
+
+api_chat_node:
+  ros__parameters:
+    memory_store_path: ~/.ros/robertito_memory_store.json
+    reminder_file_path: ~/.ros/robertito_memory_store.json
+    user_name: Emanuel
+
+    due_reminder_templates:
+      - "Acordate de {text}."
+      - "{user_name}, acordate de {text}."
+      - "Che, no te olvides de {text}."
+    scheduled_reminder_ack_templates:
+      - "Dale, te lo recuerdo {spoken_when}."
+      - "Listo, te aviso {spoken_when}."
+      - "Bueno, te hago acordar {spoken_when}."
+    unscheduled_reminder_ack_templates:
+      - "Dale, me lo guardo."
+      - "Listo, me lo anoto."
+      - "Bueno, me acuerdo de eso."
+
+presence_reaction_node:
+  ros__parameters:
+    daily_greeting_enabled: false

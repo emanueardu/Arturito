@@ -1,0 +1,21 @@
+api_chat_node:
+  ros__parameters:
+    memory_store_path: ~/.ros/robertito_memory_store.json
+    reminder_file_path: ~/.ros/robertito_reminders.json
+    daily_greeting_event_topic: /behavior/daily_greeting_emitted
+
+    reminder_check_interval_sec: 10.0
+    due_reminder_repeat_interval_sec: 0.0
+    max_due_announcements: 1
+    max_reminders_to_list: 3
+    allow_unscheduled_notes: true
+
+    default_morning_hour: 9
+    default_afternoon_hour: 15
+    default_night_hour: 20
+    user_name: Emanuel
+
+    due_reminder_templates:
+      - "{user_name}, te recuerdo que {text}."
+      - "Te recuerdo {text}."
+      - "Acordate de {text}."

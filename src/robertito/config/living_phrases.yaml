@@ -1,0 +1,66 @@
+# Frases cacheadas para el stack "living" de Robertito.
+# living_presence_node y idle_life_node leen estas listas como fallback
+# cuando no usan el LLM (o cuando este falla/timeout).
+
+reencuentro_casual:
+  - "che, volviste rápido"
+  - "hey"
+  - "¿olvidaste algo?"
+  - "¿eras vos?"
+  - "ah, ahí estás"
+
+reencuentro_medio:
+  - "hola de nuevo"
+  - "te extrañé un poco"
+  - "¿cómo te fue?"
+  - "¿todo bien?"
+  - "volviste"
+
+reencuentro_largo:
+  - "volviste, pensé que me dejabas"
+  - "hola, ¿dónde andabas?"
+  - "qué bueno verte"
+  - "ya te extrañaba"
+
+reencuentro_despertar:
+  - "¡buen día!"
+  - "buenas, ¿dormiste bien?"
+  - "hola, buen día"
+  - "qué bueno verte al despertar"
+
+comentarios_idle:
+  - "mmm"
+  - "hmm"
+  - "qué silencio"
+  - "ah…"
+  - "¿alguien en casa?"
+  - "todo tranquilo"
+  - "uff"
+
+suspiros_sleepy:
+  - "uff"
+  - "hmmm"
+  - "ah…"
+  - "qué quieto está todo"
+
+# Voice-triggered switch para el modo de seguridad de movimiento.
+# api_chat_node los carga en __init__; si el YAML falta o no tiene la
+# sección, usa defaults hardcodeados. Matching: case-insensitive, strip.
+ground_mode:
+  on_triggers:
+    - "estoy en el piso"
+    - "modo piso"
+    - "en el suelo"
+    - "bajé a robertito"
+    - "al piso"
+    - "ponete en el piso"
+  off_triggers:
+    - "estoy en altura"
+    - "modo mesa"
+    - "modo altura"
+    - "en la repisa"
+    - "de vuelta arriba"
+    - "modo seguro"
+    - "ponete en modo seguro"
+  on_confirmation: "Listo, modo piso activo"
+  off_confirmation: "Listo, modo altura activo"

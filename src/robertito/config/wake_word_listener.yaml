@@ -1,0 +1,34 @@
+wake_word_listener:
+  ros__parameters:
+    # ───────── Wake word ─────────
+    salute_phrase: "robertito"
+    cooldown_sec: 3.0
+    energy_threshold: 300.0
+    dynamic_energy: true
+
+    # ───────── Conversación continua ─────────
+    # Después del wake, queda escuchando 10 seg sin re-wake
+    direct_command_routing_enabled: true
+    command_requires_wake: false
+    command_window_sec: 10.0
+    listen_retry_sec: 2.0
+    phrase_time_limit: 15.0
+    recalibrate_interval_sec: 300.0
+    microphone_reopen_interval_sec: 60.0
+
+    # ───────── Frases de cierre ─────────
+    # Si decís alguna de estas, cierra la conversación
+    clean_phrase: "hola robertito"
+    clean_stop_phrase: "gracias"
+
+    # ───────── Topics ─────────
+    listening_active_topic: /behavior/listening_active
+    listening_timeout_topic: /behavior/listening_timeout
+    health_topic: /behavior/health/wake_word
+    health_heartbeat_sec: 10.0
+    recognized_text_topic: /assistant/listen_text
+    command_topic: /assistant/command
+    language: es-AR
+    sample_rate: 16000
+    chunk_size: 1024
+    recognizer_backend: vosk
