@@ -166,7 +166,7 @@ def generate_launch_description() -> LaunchDescription:
             {"command_topic": "/tracker_control"},
             {"stop_phrase": "dejar de seguir"},
             {"start_phrase": "seguir"},
-            {"command_window_sec": 10.0},
+            {"command_window_sec": 15.0},
             {"direct_command_routing_enabled": True},
             {"command_requires_wake": False},
             {"conversation_end_phrases": "gracias,chau,listo"},
@@ -303,6 +303,8 @@ def generate_launch_description() -> LaunchDescription:
             {"mode_topic": "/assistant/mode/cleaning_quick"},
             {"cmd_vel_topic": "arturito/cmd_vel_clean"},
             {"max_speed_mps": 0.18},
+            {"speed_pwm": 160.0},
+            {"turn_speed_radps": 0.9},
             # CRÍTICO: arrancar en INACTIVO. El default del nodo es True
             # y eso causaba que limpieza arranque sola al boot.
             {"mode_enabled": False},
