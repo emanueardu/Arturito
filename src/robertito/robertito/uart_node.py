@@ -9,7 +9,7 @@ from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
 from sensor_msgs.msg import BatteryState, Imu, Range
-from std_msgs.msg import Bool, Int16, String
+from std_msgs.msg import Bool, Float32, Int16, String
 from std_srvs.srv import SetBool, Trigger
 
 try:
@@ -90,6 +90,11 @@ class ArturitoUARTBridge(Node):
         self._clean_status_topic = str(
             self.declare_parameter('clean_status_topic', '/robot_web/clean_status').value
         )
+        self._tilt_topic = str(
+            self.declare_parameter('tilt_topic', '/head/tilt').value
+        )
+        if not self._tilt_topic.startswith('/'):
+            self._tilt_topic = f'/{self._tilt_topic}'
         if not self._cmd_vel_topic.startswith('/'):
             self._cmd_vel_topic = f'/{self._cmd_vel_topic}'
         if not self._wander_cmd_vel_topic.startswith('/'):
@@ -101,6 +106,9 @@ class ArturitoUARTBridge(Node):
         if not self._clean_status_topic.startswith('/'):
             self._clean_status_topic = f'/{self._clean_status_topic}'
         self._enabled = bool(self.declare_parameter('start_enabled', True).value)
+        self._cmd_vel_timeout = float(
+            self.declare_parameter('cmd_vel_timeout_sec', 0.5).value
+        )
 
         self._serial_lock = threading.Lock()
         self._serial: Optional[serial.Serial] = None
@@ -112,6 +120,10 @@ class ArturitoUARTBridge(Node):
         self._last_pwm_right = 0
         self._wander_active = False
         self._clean_active = False
+        # Safety: timestamp del último Twist recibido en cualquier slot de
+        # /cmd_vel. Si pasa más de cmd_vel_timeout sin Twist y los motores
+        # están con PWM≠0, el watchdog manda 'S' al firmware.
+        self._last_cmd_vel_time: Optional[float] = None
 
         self._pub_status_raw = self.create_publisher(String, 'arturito/status_raw', qos)
         self._pub_events_raw = self.create_publisher(String, 'arturito/events_raw', qos)
@@ -134,6 +146,7 @@ class ArturitoUARTBridge(Node):
         self.create_subscription(Bool, self._wake_topic, self._on_wake_signal, qos)
         self.create_subscription(Bool, self._wander_status_topic, self._on_wander_status, qos)
         self.create_subscription(Bool, self._clean_status_topic, self._on_clean_status, qos)
+        self.create_subscription(Float32, self._tilt_topic, self._on_tilt, qos)
 
         self.create_service(Trigger, 'arturito/request_status', self._srv_request_status)
         self.create_service(Trigger, 'arturito/stop', self._srv_stop)
@@ -143,6 +156,8 @@ class ArturitoUARTBridge(Node):
 
         if self._auto_request_status and self._status_request_period > 0.0:
             self.create_timer(self._status_request_period, self._request_status_timer_cb)
+        # Safety watchdog para /cmd_vel
+        self._safety_timer = self.create_timer(0.1, self._check_cmd_vel_timeout)
 
         self._open_serial()
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
@@ -150,6 +165,11 @@ class ArturitoUARTBridge(Node):
 
         self.get_logger().info(
             f'Arturito UART bridge ready on {self._port} @ {self._baudrate} bps'
+        )
+        self.get_logger().info(
+            f'uart_node ready. gates: clean_active={self._clean_active}, '
+            f'wander_active={self._wander_active}, enabled={self._enabled}, '
+            f'cmd_vel_timeout={self._cmd_vel_timeout}s'
         )
         if not self._enabled:
             self.get_logger().info('UART bridge arrancó deshabilitado y esperará wake word.')
@@ -236,23 +256,58 @@ class ArturitoUARTBridge(Node):
     def _on_cmd_vel(self, msg: Twist) -> None:
         if not self._enabled or self._clean_active or self._wander_active:
             return
+        self._last_cmd_vel_time = self.get_clock().now().nanoseconds / 1e9
         self._send_twist(msg)
 
     def _on_wander_cmd_vel(self, msg: Twist) -> None:
         if not self._enabled or self._clean_active or not self._wander_active:
             return
+        self._last_cmd_vel_time = self.get_clock().now().nanoseconds / 1e9
         self._send_twist(msg)
 
     def _on_clean_cmd_vel(self, msg: Twist) -> None:
         if not self._enabled or not self._clean_active:
             return
+        self._last_cmd_vel_time = self.get_clock().now().nanoseconds / 1e9
         self._send_twist(msg)
 
     def _on_wander_status(self, msg: Bool) -> None:
-        self._wander_active = bool(msg.data)
+        new_state = bool(msg.data)
+        if new_state != self._wander_active:
+            self.get_logger().info(
+                f"wander_active gate: {self._wander_active} -> {new_state}"
+            )
+            self._wander_active = new_state
 
     def _on_clean_status(self, msg: Bool) -> None:
-        self._clean_active = bool(msg.data)
+        new_state = bool(msg.data)
+        if new_state != self._clean_active:
+            self.get_logger().info(
+                f"clean_active gate: {self._clean_active} -> {new_state}"
+            )
+            self._clean_active = new_state
+
+    def _on_tilt(self, msg: Float32) -> None:
+        """Convierte comando de tilt en grados a 'T<deg>' UART.
+
+        Firmware ESP32 acepta deg ∈ [-30, 90]; valores fuera son clampeados.
+        El firmware aplica internamente tilt_zero_offset=30 antes de mapear
+        a [0, 180] del servo, así que solo mandamos el grado tal cual.
+        """
+        if not self._enabled:
+            return
+        try:
+            deg = int(round(float(msg.data)))
+        except (TypeError, ValueError):
+            self.get_logger().warning(
+                f"tilt msg con valor inválido: {msg.data}"
+            )
+            return
+        deg = max(-30, min(90, deg))
+        self._send_line(f'T{deg}')
+        # debug: el topic puede publicarse varias veces por segundo
+        # (clean_quick republishea durante el ramp-up).
+        self.get_logger().debug(f"Tilt command sent: T{deg}")
 
     def _send_twist(self, msg: Twist) -> None:
         v = clamp(msg.linear.x, -self._max_wheel_speed, self._max_wheel_speed)
@@ -328,39 +383,52 @@ class ArturitoUARTBridge(Node):
         return resp
 
     def _srv_set_vacuum(self, req: SetBool.Request, resp: SetBool.Response) -> SetBool.Response:
+        """Solicita cambio de estado de aspiradora al firmware.
+
+        Fire-and-forget: el cache `_vacuum_state` se actualiza solo cuando el
+        firmware confirma vía JSON con clave 'vac' (en `_handle_status_json`).
+        """
         desired = bool(req.data)
-        send = self._vacuum_state is None or self._vacuum_state != desired
-        if send:
-            send = self._send_line('V')
-            resp.success = bool(send)
-            if resp.success:
-                self._vacuum_state = desired
-                resp.message = f'Vacuum state set to {desired}'
-            else:
-                resp.message = 'Serial unavailable'
-        else:
-            resp.success = True
-            resp.message = 'Vacuum already set as requested'
+        cmd = 'VAC1' if desired else 'VAC0'
+        self._send_line(cmd)
+        self.get_logger().info(f"Vacuum command sent: {cmd} (desired={desired})")
+        resp.success = True
+        resp.message = f'Vacuum command {cmd} dispatched'
         return resp
 
     def _srv_set_brush(self, req: SetBool.Request, resp: SetBool.Response) -> SetBool.Response:
+        """Solicita cambio de estado de escobilla al firmware.
+
+        Fire-and-forget: el cache `_brush_state` se actualiza solo cuando el
+        firmware confirma vía JSON con clave 'brush' (en `_handle_status_json`).
+        """
         desired = bool(req.data)
-        send = self._brush_state is None or self._brush_state != desired
-        if send:
-            send = self._send_line('B')
-            resp.success = bool(send)
-            if resp.success:
-                self._brush_state = desired
-                resp.message = f'Brush state set to {desired}'
-            else:
-                resp.message = 'Serial unavailable'
-        else:
-            resp.success = True
-            resp.message = 'Brush already set as requested'
+        cmd = 'BRUSH1' if desired else 'BRUSH0'
+        self._send_line(cmd)
+        self.get_logger().info(f"Brush command sent: {cmd} (desired={desired})")
+        resp.success = True
+        resp.message = f'Brush command {cmd} dispatched'
         return resp
 
     def _request_status_timer_cb(self) -> None:
         self._send_line('SENS')
+
+    def _check_cmd_vel_timeout(self) -> None:
+        """Si pasaron >cmd_vel_timeout sin Twist, manda STOP por seguridad."""
+        if self._last_cmd_vel_time is None:
+            return
+        now = self.get_clock().now().nanoseconds / 1e9
+        if (now - self._last_cmd_vel_time) <= self._cmd_vel_timeout:
+            return
+        # Solo mandar 'S' si los motores no estaban ya parados.
+        if self._last_pwm_left != 0 or self._last_pwm_right != 0:
+            self._send_line('S')
+            self.get_logger().debug(
+                f'cmd_vel timeout {self._cmd_vel_timeout}s — STOP enviado'
+            )
+            self._last_pwm_left = 0
+            self._last_pwm_right = 0
+        self._last_cmd_vel_time = None
 
     # endregion -------------------------------------------------------------
 

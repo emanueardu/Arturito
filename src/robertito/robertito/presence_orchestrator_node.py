@@ -217,6 +217,15 @@ class PresenceOrchestrator(Node):
         # External-publisher courtesy window
         self._external_respect_s = p("external_expression_respect_s", 10, float)
 
+        # ─────────── Modo limpieza (mute total) ───────────
+        # Cuando clean_quick toma control, el orchestrator NO publica cmd_vel,
+        # NO dispara motor_gestures (cliff/bump/startled/shaken) y SOLO permite
+        # la expresión fija `_clean_mode_expr`. clean_quick maneja toda la
+        # lógica reactiva durante la limpieza con su propio loop.
+        self._clean_mode_active: bool = False
+        self._clean_mode_expr = p("clean_mode_expression", "atento", str)
+        self._clean_status_topic = p("clean_status_topic", "/robot_web/clean_status", str)
+
         # ─────────── Submódulos ───────────
         now = self._now()
         trig_cfg = TriggerConfig(
@@ -333,6 +342,10 @@ class PresenceOrchestrator(Node):
         self.create_subscription(Bool, self._speaking_topic, self._on_speaking, 10, callback_group=sub_group)
         self.create_subscription(String, self._eyes_topic, self._on_eyes_published, 10, callback_group=sub_group)
         self.create_subscription(String, self._req_topic, self._on_request, 10, callback_group=sub_group)
+        self.create_subscription(
+            Bool, self._clean_status_topic, self._on_clean_status, 10,
+            callback_group=sub_group,
+        )
 
         # ─────────── Timer FSM ───────────
         self._fsm_timer = self.create_timer(self._fsm_period, self._fsm_tick, callback_group=timer_group)
@@ -392,6 +405,13 @@ class PresenceOrchestrator(Node):
 
     def _publish_expression(self, expr: str) -> None:
         if not expr:
+            return
+        # Mute durante limpieza: solo permitimos la expresión fija del modo
+        # limpieza. Esto bloquea expresiones reactivas (sorprendido por bump,
+        # risa_fuerte por shaken, etc.) y deja a clean_quick mostrar lo que
+        # quiera. wake_ack default = "atento" coincide con clean_mode_expr y
+        # pasa OK.
+        if self._clean_mode_active and expr != self._clean_mode_expr:
             return
         self._eyes_pub.publish(String(data=expr))
         self._last_self_publish_at = self._now()
@@ -471,6 +491,27 @@ class PresenceOrchestrator(Node):
         az = msg.linear_acceleration.z
         magnitude_g = math.sqrt(ax * ax + ay * ay + az * az) / 9.81
         self._triggers.update_imu_magnitude(magnitude_g, self._now())
+
+    def _on_clean_status(self, msg: Bool) -> None:
+        """Modo limpieza: mute total de reflejos del orchestrator.
+
+        clean_quick maneja sus propios bumpers/proximidad/cliff. Si el
+        orchestrator también reacciona, se pisan dos lógicas y el robot
+        hace movimientos imprevistos durante la limpieza.
+        """
+        new_state = bool(msg.data)
+        if new_state == self._clean_mode_active:
+            return
+        action = "muting" if new_state else "resuming"
+        self.get_logger().info(
+            f"clean_mode_active: {self._clean_mode_active} -> {new_state} "
+            f"({action} gestures, cmd_vel and reactive expressions)"
+        )
+        self._clean_mode_active = new_state
+        if new_state:
+            # Forzar expresión fija del modo limpieza (atento por default).
+            # Esto pasa por _publish_expression, que respeta el flag.
+            self._publish_expression(self._clean_mode_expr)
 
     def _on_wake(self, msg: Bool) -> None:
         if not bool(msg.data):
@@ -644,21 +685,29 @@ class PresenceOrchestrator(Node):
     # ─────────────────── Trigger handlers ───────────────────
 
     def _handle_cliff(self) -> None:
+        if self._clean_mode_active:
+            return  # clean_quick ya lo maneja con su propia lógica.
         self._publish_expression(self._expr_cliff)
         self._say("cliff")
         self._motor.reverse(self._cliff_reverse_dist)
 
     def _handle_bump(self, side: str) -> None:
+        if self._clean_mode_active:
+            return  # clean_quick ya lo maneja con su propia lógica.
         self._publish_expression(self._expr_bump)
         self._say("bump")
         self._motor.bump_reaction(side, self._bump_reverse_dist, self._bump_spin_deg)
 
     def _handle_startled(self) -> None:
+        if self._clean_mode_active:
+            return  # clean_quick ya gestiona la proximidad por ultrasónico.
         self._publish_expression(self._expr_startled)
         self._say("startled")
         self._motor.reverse(self._startled_retreat)
 
     def _handle_shaken(self) -> None:
+        if self._clean_mode_active:
+            return  # No reír / sacudirse durante una limpieza pacífica.
         self._publish_expression(self._expr_shaken)
         self._say("shaken")
 

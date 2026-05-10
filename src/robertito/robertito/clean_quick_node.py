@@ -92,6 +92,12 @@ class CleanQuick(Node):
         self._say_topic = str(
             self.declare_parameter('say_topic', '/assistant/say').value
         )
+        self._tts_msg_enter = str(
+            self.declare_parameter('tts_enter_message', 'Empezando limpieza').value
+        )
+        self._tts_msg_exit = str(
+            self.declare_parameter('tts_exit_message', 'Limpieza terminada').value
+        )
         self._mode_service_name = str(
             self.declare_parameter(
                 'mode_service', '/assistant/mode/cleaning_quick/set'
@@ -101,6 +107,11 @@ class CleanQuick(Node):
         self._cmd_pub = self.create_publisher(Twist, self._cmd_vel_topic, 10)
         self._tilt_pub = self.create_publisher(Float32, self._tilt_topic, 10)
         self._say_pub = self.create_publisher(String, self._say_topic, 10)
+        # Autoridad de modo limpieza: este nodo publica clean_status para que
+        # uart_node abra/cierre el gate sin depender del web bridge.
+        self._clean_status_pub = self.create_publisher(
+            Bool, '/robot_web/clean_status', 10
+        )
         self.create_subscription(String, self._status_topic, self._on_status, 10)
         if self._mode_topic:
             self.create_subscription(Bool, self._mode_topic, self._on_mode_change, 10)
@@ -145,6 +156,9 @@ class CleanQuick(Node):
 
         self._timer = self.create_timer(0.1, self._on_timer)
         self._publish_stop()
+        # Publicar estado inicial (False) para que el gate de uart_node arranque
+        # explícitamente abierto a /cmd_vel principal.
+        self._publish_clean_status()
         self._apply_mode(mode_enabled_param)
         self.get_logger().info('CleanQuick listo: navegando y limpiando.')
 
@@ -220,10 +234,14 @@ class CleanQuick(Node):
         if enabled == self._mode_enabled:
             return
         self._mode_enabled = enabled
+        # Publicar status inmediatamente al toggle, así el gate de uart_node
+        # se actualiza sin depender del web bridge.
+        self._publish_clean_status()
         now = self.get_clock().now()
         if enabled:
             self.get_logger().info("Modo limpieza rápida activado por comando de voz.")
-            self._publish_tts('modo limpieza activado')
+            if self._tts_msg_enter:
+                self._publish_tts(self._tts_msg_enter)
             self._state = 'forward'
             self._reset_obstacle_state()
             self._tilt_republish_remaining = max(0, self._tilt_republish_count - 1)
@@ -258,15 +276,22 @@ class CleanQuick(Node):
             )
             return
         self.get_logger().info("Modo limpieza rápida desactivado por comando de voz.")
-        self._publish_tts('modo limpieza desactivado')
+        if self._tts_msg_exit:
+            self._publish_tts(self._tts_msg_exit)
         self._publish_stop()
         self._tilt_republish_remaining = 0
         self._tilt_next_republish_time = None
         self._publish_tilt(self._tilt_idle_deg)
         self._vacuum_desired = False
         self._brush_desired = False
-        self._vacuum_confirmed = False
-        self._brush_confirmed = False
+        # NO resetear _vacuum_confirmed/_brush_confirmed a False acá: el
+        # callback del enable los dejó en True. Si los reseteamos antes de
+        # _request_service_state, la guard `confirmed == desired` (False==False)
+        # hace early-return y el servicio jamás se llama → vacuum/brush quedan
+        # prendidos hasta apagado externo. Bug confirmado por log de prod.
+        # Nulificamos last_request para bypassear el retry period.
+        self._vacuum_last_request = None
+        self._brush_last_request = None
         self._request_service_state(
             self._vacuum_client,
             False,
@@ -313,6 +338,13 @@ class CleanQuick(Node):
 
     def _publish_stop(self) -> None:
         self._cmd_pub.publish(Twist())
+
+    def _publish_clean_status(self) -> None:
+        """Publica el estado del modo limpieza para uart_node y otros listeners."""
+        msg = Bool()
+        msg.data = bool(self._mode_enabled)
+        self._clean_status_pub.publish(msg)
+        self.get_logger().info(f"clean_status publicado: {msg.data}")
 
     def _publish_tilt(self, tilt_deg: float) -> None:
         self._tilt_pub.publish(Float32(data=float(tilt_deg)))

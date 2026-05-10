@@ -3,6 +3,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.descriptions import ParameterValue
@@ -228,6 +229,7 @@ def generate_launch_description() -> LaunchDescription:
         package="robertito",
         executable="person_tracker_node",
         name="person_tracker_node",
+        condition=IfCondition("false"),  # DESACTIVADO — pendiente PR5 (riesgo de spin)
         output="screen",
         parameters=[
             {"wake_topic": wake_topic},
