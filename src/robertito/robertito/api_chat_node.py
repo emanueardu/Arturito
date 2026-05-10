@@ -688,6 +688,15 @@ class APIChatNode(Node):
         self.create_subscription(
             Bool, self._daily_greeting_event_topic, self._on_daily_greeting, 10
         )
+        # PR4.1.1 - listening_active source of truth de la ventana de
+        # conversacion (sincronizado con wake_word_listener).
+        self._listening_active = False
+        self._listening_active_topic = self.declare_parameter(
+            "listening_active_topic", "/behavior/listening_active"
+        ).value
+        self.create_subscription(
+            Bool, self._listening_active_topic, self._on_listening_active_change, 10
+        )
 
         # Stack "living": publisher de ground_mode + endpoint de frases para
         # living_presence_node (request/response sobre topics).
@@ -870,6 +879,15 @@ class APIChatNode(Node):
                 daemon=True,
             ).start()
 
+    def _on_listening_active_change(self, msg: Bool) -> None:
+        """Sincroniza con la ventana del wake_word_listener.
+
+        Mientras listening_active=True, _on_user_text acepta texto sin
+        importar cuánto pasó desde el último wake event. Es la single
+        source of truth de la ventana de conversación.
+        """
+        self._listening_active = bool(msg.data)
+
     def _on_user_text(self, msg: String) -> None:
         text = msg.data.strip()
         if not text:
@@ -877,8 +895,14 @@ class APIChatNode(Node):
         session_id = self._active_session
         if session_id <= 0:
             return
-        if not self._awaiting_followup and (time.monotonic() - self._last_wake_monotonic) > 12.0:
-            return
+        # PR4.1.1: si la ventana del listener está abierta, aceptamos texto
+        # sin importar cuánto pasó desde el último wake. Si no llegó nunca
+        # listening_active (fallback), mantenemos el timeout subido a 16s
+        # para cubrir la ventana real (15s) con margen.
+        if not self._listening_active and not self._awaiting_followup:
+            elapsed = time.monotonic() - self._last_wake_monotonic
+            if elapsed > 16.0:
+                return
         self._awaiting_followup = False
         try:
             self._request_queue.put_nowait((text, session_id))

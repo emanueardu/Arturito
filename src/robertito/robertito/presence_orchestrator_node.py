@@ -226,6 +226,16 @@ class PresenceOrchestrator(Node):
         self._clean_mode_expr = p("clean_mode_expression", "atento", str)
         self._clean_status_topic = p("clean_status_topic", "/robot_web/clean_status", str)
 
+        # ─────────── Conversación (PR4.1) ───────────
+        # Cuando wake_word_listener abre ventana de follow-up, mostramos una
+        # expresión de "escuchando" (variante de atento con glint más grande).
+        # Limpieza > conversación: si _clean_mode_active, no se cambia.
+        self._listening_active: bool = False
+        self._listening_active_topic = p(
+            "listening_active_topic", "/behavior/listening_active", str
+        )
+        self._listening_expr = p("listening_expression", "escuchando", str)
+
         # ─────────── Submódulos ───────────
         now = self._now()
         trig_cfg = TriggerConfig(
@@ -344,6 +354,10 @@ class PresenceOrchestrator(Node):
         self.create_subscription(String, self._req_topic, self._on_request, 10, callback_group=sub_group)
         self.create_subscription(
             Bool, self._clean_status_topic, self._on_clean_status, 10,
+            callback_group=sub_group,
+        )
+        self.create_subscription(
+            Bool, self._listening_active_topic, self._on_listening_active, 10,
             callback_group=sub_group,
         )
 
@@ -512,6 +526,32 @@ class PresenceOrchestrator(Node):
             # Forzar expresión fija del modo limpieza (atento por default).
             # Esto pasa por _publish_expression, que respeta el flag.
             self._publish_expression(self._clean_mode_expr)
+
+    def _on_listening_active(self, msg: Bool) -> None:
+        """Cambia expresión cuando el listener abre/cierra ventana de conversación.
+
+        Limpieza tiene prioridad: si _clean_mode_active, no toca la expresión.
+        Cuando la ventana cierra, deja al FSM normal recuperar control en el
+        próximo tick.
+        """
+        new_state = bool(msg.data)
+        if new_state == self._listening_active:
+            return
+        self._listening_active = new_state
+        if self._clean_mode_active:
+            return  # limpieza > conversación
+        if new_state:
+            self.get_logger().info(
+                f"Ventana de conversación abierta -> expresión "
+                f"'{self._listening_expr}'"
+            )
+            self._publish_expression(self._listening_expr)
+        else:
+            self.get_logger().info(
+                "Ventana de conversación cerrada -> expresión normal"
+            )
+            # No forzamos expresión: dejamos al FSM tomar control en el
+            # próximo tick.
 
     def _on_wake(self, msg: Bool) -> None:
         if not bool(msg.data):

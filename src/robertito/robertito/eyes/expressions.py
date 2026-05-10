@@ -24,6 +24,21 @@ EXPRESSIONS: dict[str, EyesPair] = {
             glint_size=4, glint_offset=(-5, -5),
         ),
     ),
+    # PR4.1: variante de 'atento' con glint más grande para indicar
+    # ventana de conversación abierta (escuchando follow-up sin wake word).
+    # Idéntica a 'atento' excepto glint_size 4 -> 6.
+    "escuchando": EyesPair(
+        left=EyeState(
+            width=80, height=56, corner_radius=16,
+            pupil_size=1.2, pupil_y=-0.15,
+            glint_size=6, glint_offset=(-5, -5),
+        ),
+        right=EyeState(
+            width=80, height=56, corner_radius=16,
+            pupil_size=1.2, pupil_y=-0.15,
+            glint_size=6, glint_offset=(-5, -5),
+        ),
+    ),
     "pensativo": EyesPair(
         left=EyeState(
             pupil_size=0.9, pupil_x=0.4, pupil_y=-0.15,

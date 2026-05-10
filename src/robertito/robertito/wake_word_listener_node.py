@@ -48,7 +48,7 @@ class WakeWordListenerNode(Node):
         )
         self._cooldown = float(self.declare_parameter("cooldown_sec", 3.0).value)
         self._command_window_sec = float(
-            self.declare_parameter("command_window_sec", 6.0).value
+            self.declare_parameter("command_window_sec", 15.0).value
         )
         self._command_requires_wake = bool(
             self.declare_parameter("command_requires_wake", True).value
@@ -439,19 +439,27 @@ class WakeWordListenerNode(Node):
             if now - self._last_detection_ts < self._cooldown:
                 remaining = self._cooldown - (now - self._last_detection_ts)
                 self.get_logger().debug(
-                    f"Wake word detectada pero en cooldown ({remaining:.2f}s restante)"
+                    f"Wake word repetida en cooldown ({remaining:.2f}s); "
+                    "ignoro re-trigger pero proceso remainder"
                 )
-                return
-            self._last_detection_ts = now
-            score = self._calculate_score()
-            self._publisher.publish(Bool(data=True))
-            self._score_publisher.publish(Float32(data=score))
-            self.get_logger().info(
-                f"¡Wake word '{self._wake_word}' detectada! score={score:.2f}"
-            )
-            self._awaiting_command = True
-            self._command_listen_until = now + self._command_window_sec
-            self._set_listening_active(True)
+                # Si la ventana NO estaba abierta, no hay nada que procesar.
+                if not self._awaiting_command:
+                    return
+                # Si ya estábamos awaiting_command, dejamos caer al branch
+                # follow-up de abajo. Esto evita perder texto cuando el
+                # listener detecta la wake word por error (eco del TTS, ruido)
+                # durante una ventana ya abierta.
+            else:
+                self._last_detection_ts = now
+                score = self._calculate_score()
+                self._publisher.publish(Bool(data=True))
+                self._score_publisher.publish(Float32(data=score))
+                self.get_logger().info(
+                    f"¡Wake word '{self._wake_word}' detectada! score={score:.2f}"
+                )
+                self._awaiting_command = True
+                self._command_listen_until = now + self._command_window_sec
+                self._set_listening_active(True)
 
         if self._awaiting_command and now <= self._command_listen_until:
             if spoken_remainder:
@@ -473,19 +481,38 @@ class WakeWordListenerNode(Node):
                     self._publish_command(command_text)
                 self._publish_recognized_text(spoken_remainder)
                 self._command_listen_until = now + self._command_window_sec
-                self.get_logger().debug(
+                self.get_logger().info(
                     f"Ventana renovada {self._command_window_sec}s"
                 )
                 return
-        elif not self._command_requires_wake:
-            command_text = self._extract_command(remainder)
-            if command_text:
-                if self._direct_command_routing_enabled:
-                    self._publish_command(command_text)
+        elif not self._command_requires_wake and self._awaiting_command:
+            # Follow-up: ventana de conversación abierta, sin wake word esta
+            # vez. PR4.1 fix: publicamos el texto SIEMPRE y renovamos ventana,
+            # no solo cuando matchea un comando hardcoded.
+            if not spoken_remainder:
+                return
+            low_text = spoken_remainder.lower().strip(" ,.;:!?")
+            is_end = any(
+                p and p in low_text for p in self._conversation_end_phrases
+            )
+            if is_end:
                 self._publish_recognized_text(spoken_remainder)
                 self._awaiting_command = False
                 self._set_listening_active(False)
+                self.get_logger().info(
+                    f"Cierre detectado en follow-up: '{spoken_remainder}'"
+                )
                 return
+            command_text = self._extract_command(remainder)
+            if command_text and self._direct_command_routing_enabled:
+                self._publish_command(command_text)
+            self._publish_recognized_text(spoken_remainder)
+            self._command_listen_until = now + self._command_window_sec
+            self.get_logger().info(
+                f"Follow-up renovado {self._command_window_sec}s: "
+                f"'{spoken_remainder}'"
+            )
+            return
 
         self._expire_command_window()
 
