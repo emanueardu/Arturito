@@ -386,9 +386,20 @@ class VoiceSynthNode(Node):
                 )
                 self._tts_provider = "piper"
                 self._el_provider = None
+        # PR2.2: Piper se inicializa SIEMPRE (no solo cuando es el provider
+        # primario), para que ElevenLabs/Azure puedan caer en él runtime si
+        # fallan (HTTP 401/429, network, etc.).
         self._piper_process: Optional[_PiperProcess] = None
-        if self._tts_provider == "piper":
-            self._piper_process = self._init_piper_process()
+        self._piper_process = self._init_piper_process()
+        if self._piper_process is None:
+            if self._tts_provider == "piper":
+                raise RuntimeError(
+                    "Piper init falló y es el provider primario; abortando."
+                )
+            self.get_logger().warning(
+                f"Piper init falló; tts_provider={self._tts_provider} "
+                "seguirá sin fallback runtime de Piper."
+            )
 
         self._queue: "queue.PriorityQueue[tuple[int, int, str]]" = queue.PriorityQueue()
         self._queue_sequence = itertools.count()
@@ -926,8 +937,19 @@ class VoiceSynthNode(Node):
                 cache_hit = True
                 return cache_path, cache_hit
 
-        # Cache miss: llamar a la API
-        wav_bytes = self._el_provider.synthesize(cache_text)
+        # Cache miss: llamar a la API. PR2.2: si la API falla (HTTP 401
+        # quota_exceeded, 429 rate, 5xx, network), caemos a Piper para esta
+        # frase puntual. NO mutamos self._tts_provider — la próxima frase
+        # vuelve a intentar ElevenLabs (puede haber recuperado créditos).
+        try:
+            wav_bytes = self._el_provider.synthesize(cache_text)
+        except Exception as exc:
+            self.get_logger().warning(
+                f"ElevenLabs synth falló ({exc}); fallback a Piper."
+            )
+            if self._piper_process is None:
+                raise  # Sin Piper no podemos hacer fallback. Que rompa visible.
+            return self._synthesize_piper(text)
 
         output_path = cache_path or self._temp_audio_path(cache_key)
         with open(output_path, "wb") as f:
