@@ -1,8 +1,8 @@
 import fcntl
 import json
-import math
 import random
 import re
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -10,16 +10,31 @@ import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.duration import Duration
 from rclpy.node import Node
+from sensor_msgs.msg import Range
 from std_msgs.msg import Bool, Float32, String
 from std_srvs.srv import SetBool
 
 
+class CleanState(Enum):
+    IDLE = 0
+    FORWARD = 1
+    SLOW = 2
+    BACKING = 3
+    TURNING = 4
+
+
 class CleanQuick(Node):
-    """Modo limpieza: activa aspiradora/escobillas y navega evitando obstáculos."""
+    """Modo limpieza: activa aspiradora/escobillas y navega evitando obstáculos.
+
+    FSM reactivo (PR4.2): estados IDLE/FORWARD/SLOW/BACKING/TURNING. Sin yaw,
+    sin lógica de obstáculos por confirmación. El ultrasonic frontal anticipa
+    paredes (slow / stop) y los bumpers + back+turn responden a colisión.
+    """
 
     def __init__(self) -> None:
         super().__init__('clean_quick')
 
+        # ─────────── Topics y modo ───────────
         self._cmd_vel_topic = str(
             self.declare_parameter('cmd_vel_topic', 'arturito/cmd_vel_clean').value
         )
@@ -30,6 +45,9 @@ class CleanQuick(Node):
         )
         if not self._status_topic.startswith('/'):
             self._status_topic = f'/{self._status_topic}'
+        self._ultrasonic_topic = str(
+            self.declare_parameter('ultrasonic_topic', '/arturito/ultrasonic').value
+        )
         self._mode_topic = str(
             self.declare_parameter(
                 'mode_topic', '/assistant/mode/cleaning_quick'
@@ -37,35 +55,27 @@ class CleanQuick(Node):
         )
         mode_enabled_param = bool(self.declare_parameter('mode_enabled', True).value)
         self._mode_enabled = False
+
+        # ─────────── Velocidades históricas (mantenidas por compat) ───────────
+        # NO usadas por el FSM nuevo, que usa los params *_speed_mps específicos
+        # de abajo. Se preservan para no romper YAMLs/launches existentes.
         self._max_speed_mps = float(self.declare_parameter('max_speed_mps', 0.25).value)
         self._speed_pwm = float(self.declare_parameter('speed_pwm', 200.0).value)
-        self._forward_speed = self._max_speed_mps * (self._speed_pwm / 255.0)
+        self._forward_speed_legacy = self._max_speed_mps * (self._speed_pwm / 255.0)
         self._reverse_speed = float(self.declare_parameter('reverse_speed_mps', 0.08).value)
         self._reverse_time = float(self.declare_parameter('reverse_time_sec', 1.0).value)
         self._turn_speed = float(self.declare_parameter('turn_speed_radps', 1.2).value)
-        self._turn_angle_deg = float(self.declare_parameter('turn_angle_deg', 90.0).value)
+
+        # ─────────── Params status_raw / parsing ───────────
         self.declare_parameter('obstacle_distance_cm', 10.0)
-        self.declare_parameter('obstacle_min_distance_cm', 5.0)
-        self._status_timeout = float(self.declare_parameter('status_timeout_sec', 1.0).value)
-        self._use_yaw_turn = bool(self.declare_parameter('use_yaw_turn', True).value)
-        self._turn_direction_mode = str(
-            self.declare_parameter('turn_direction', 'random').value
-        ).lower()
+        self._status_timeout = float(
+            self.declare_parameter('status_timeout_sec', 1.0).value
+        )
         self._dist_key = str(self.declare_parameter('dist_key', 'dist').value)
         self._yaw_key = str(self.declare_parameter('yaw_key', 'yaw').value)
         self._dist_unit = str(self.declare_parameter('dist_unit', 'mm').value).lower()
-        self._obstacle_confirm_count = int(
-            self.declare_parameter('obstacle_confirm_count', 2).value
-        )
-        self._obstacle_cooldown_sec = float(
-            self.declare_parameter('obstacle_cooldown_sec', 1.0).value
-        )
-        self._stop_settle_sec = float(
-            self.declare_parameter('stop_settle_sec', 0.1).value
-        )
-        self._advance_after_turn_sec = float(
-            self.declare_parameter('advance_after_turn_sec', 1.0).value
-        )
+
+        # ─────────── Tilt ───────────
         self._tilt_topic = str(self.declare_parameter('tilt_topic', '/head/tilt').value)
         if not self._tilt_topic.startswith('/'):
             self._tilt_topic = f'/{self._tilt_topic}'
@@ -77,6 +87,8 @@ class CleanQuick(Node):
         self._tilt_republish_period_sec = float(
             self.declare_parameter('tilt_republish_period_sec', 0.2).value
         )
+
+        # ─────────── Servicios actuadores ───────────
         self._service_retry_period_sec = float(
             self.declare_parameter('service_retry_period_sec', 1.0).value
         )
@@ -89,6 +101,8 @@ class CleanQuick(Node):
         self._service_wait_timeout = float(
             self.declare_parameter('service_wait_timeout_sec', 1.5).value
         )
+
+        # ─────────── TTS ───────────
         self._say_topic = str(
             self.declare_parameter('say_topic', '/assistant/say').value
         )
@@ -104,15 +118,49 @@ class CleanQuick(Node):
             ).value
         )
 
+        # ─────────── FSM params (PR4.2) ───────────
+        self._fsm_forward_speed = float(
+            self.declare_parameter('forward_speed_mps', 0.141).value
+        )
+        self._fsm_slow_speed = float(
+            self.declare_parameter('slow_speed_mps', 0.07).value
+        )
+        self._fsm_back_speed = float(
+            self.declare_parameter('back_speed_mps', -0.08).value
+        )
+        self._fsm_turn_speed = float(
+            self.declare_parameter('fsm_turn_speed_radps', 0.9).value
+        )
+        self._fsm_us_slow_m = float(
+            self.declare_parameter('us_slow_m', 0.30).value
+        )
+        self._fsm_us_stop_m = float(
+            self.declare_parameter('us_stop_m', 0.15).value
+        )
+        self._fsm_us_resume_m = float(
+            self.declare_parameter('us_resume_m', 0.40).value
+        )
+        self._fsm_back_duration_s = float(
+            self.declare_parameter('back_duration_s', 0.4).value
+        )
+        self._fsm_turn_duration_s = float(
+            self.declare_parameter('turn_duration_s', 0.25).value
+        )
+        self._fsm_random_turn_gap_s = float(
+            self.declare_parameter('random_turn_gap_s', 20.0).value
+        )
+
+        # ─────────── Pubs / Subs / Services ───────────
         self._cmd_pub = self.create_publisher(Twist, self._cmd_vel_topic, 10)
         self._tilt_pub = self.create_publisher(Float32, self._tilt_topic, 10)
         self._say_pub = self.create_publisher(String, self._say_topic, 10)
-        # Autoridad de modo limpieza: este nodo publica clean_status para que
-        # uart_node abra/cierre el gate sin depender del web bridge.
         self._clean_status_pub = self.create_publisher(
             Bool, '/robot_web/clean_status', 10
         )
         self.create_subscription(String, self._status_topic, self._on_status, 10)
+        self.create_subscription(
+            Range, self._ultrasonic_topic, self._on_ultrasonic, 10
+        )
         if self._mode_topic:
             self.create_subscription(Bool, self._mode_topic, self._on_mode_change, 10)
         self.create_service(SetBool, self._mode_service_name, self._on_mode_service)
@@ -120,30 +168,15 @@ class CleanQuick(Node):
         self._vacuum_client = self.create_client(SetBool, self._vacuum_service)
         self._brush_client = self.create_client(SetBool, self._brush_service)
 
+        # ─────────── Estado runtime ───────────
         self._lock_file = self._acquire_singleton_lock()
-        self._state = 'forward'
-        self._turn_end_time: Optional[rclpy.time.Time] = None
-        self._turn_timeout_deadline: Optional[rclpy.time.Time] = None
-        self._turn_direction = 1.0
         self._last_dist_mm: Optional[float] = None
         self._last_yaw_deg: Optional[float] = None
         self._last_status_stamp: Optional[rclpy.time.Time] = None
-        self._turn_start_yaw: Optional[float] = None
-        self._turn_target_angle_deg = self._turn_angle_deg
-        self._reverse_end_time: Optional[rclpy.time.Time] = None
         self._bumper_left = False
         self._bumper_right = False
         self._bumper_left_prev = False
         self._bumper_right_prev = False
-        self._pending_bumper_turn: Optional[float] = None
-        self._active_bumper_turn: Optional[float] = None
-        self._obs_dir = 1.0
-        self._obs_phase_end_time: Optional[rclpy.time.Time] = None
-        self._obs_turn_start_yaw: Optional[float] = None
-        self._obs_turn_target_deg: float = 0.0
-        self._obs_confirm_counter = 0
-        self._obs_cooldown_until: Optional[rclpy.time.Time] = None
-        self._last_obstacle_dir: Optional[float] = None
         self._tilt_republish_remaining = 0
         self._tilt_next_republish_time: Optional[rclpy.time.Time] = None
         self._vacuum_desired = False
@@ -152,15 +185,23 @@ class CleanQuick(Node):
         self._brush_confirmed = False
         self._vacuum_last_request: Optional[rclpy.time.Time] = None
         self._brush_last_request: Optional[rclpy.time.Time] = None
-        self._bumper_active = False
+
+        # ─────────── Estado FSM (PR4.2) ───────────
+        now0 = self.get_clock().now()
+        self._fsm_state = CleanState.IDLE
+        self._fsm_state_enter_time = now0
+        self._fsm_last_bumper_side: Optional[str] = None
+        self._fsm_last_random_turn_time = now0
+        self._fsm_ultrasonic_m = float('inf')
+        self._fsm_ultrasonic_last_stamp: Optional[rclpy.time.Time] = None
 
         self._timer = self.create_timer(0.1, self._on_timer)
         self._publish_stop()
-        # Publicar estado inicial (False) para que el gate de uart_node arranque
-        # explícitamente abierto a /cmd_vel principal.
         self._publish_clean_status()
         self._apply_mode(mode_enabled_param)
         self.get_logger().info('CleanQuick listo: navegando y limpiando.')
+
+    # ─────────── Callbacks de entrada ───────────
 
     def _on_status(self, msg: String) -> None:
         payload = msg.data
@@ -205,30 +246,39 @@ class CleanQuick(Node):
             except (TypeError, ValueError):
                 pass
 
-        if (self._bumper_left and not self._bumper_left_prev) or (
-            self._bumper_right and not self._bumper_right_prev
-        ):
-            if self._bumper_left and self._bumper_right:
-                self._pending_bumper_turn = 1.0 if random.random() >= 0.5 else -1.0
-            elif self._bumper_left:
-                self._pending_bumper_turn = 1.0
-            else:
-                self._pending_bumper_turn = -1.0
-
-        self._bumper_left_prev = self._bumper_left
-        self._bumper_right_prev = self._bumper_right
+        # Bumper edge detection lo hace _fsm_tick, no acá. Solo registramos
+        # los flags actuales y dejamos que el FSM compare con prev.
         self._last_status_stamp = self.get_clock().now()
+
+    def _on_ultrasonic(self, msg: Range) -> None:
+        """Actualiza distancia frontal medida por ultrasonic.
+
+        Filtra ruido: si range fuera del rango válido del sensor (5cm-4m),
+        ignora el sample y no actualiza el cache.
+        """
+        try:
+            r = float(msg.range)
+        except (TypeError, ValueError):
+            return
+        if not (0.05 <= r <= 4.0):
+            return
+        self._fsm_ultrasonic_m = r
+        self._fsm_ultrasonic_last_stamp = self.get_clock().now()
 
     def _on_mode_change(self, msg: Bool) -> None:
         if msg is None:
             return
         self._apply_mode(bool(msg.data))
 
-    def _on_mode_service(self, request: SetBool.Request, response: SetBool.Response) -> SetBool.Response:
+    def _on_mode_service(
+        self, request: SetBool.Request, response: SetBool.Response
+    ) -> SetBool.Response:
         self._apply_mode(bool(request.data))
         response.success = True
         response.message = 'Solicitud de modo limpieza rápida procesada.'
         return response
+
+    # ─────────── Modo: enter/exit ───────────
 
     def _apply_mode(self, enabled: bool) -> None:
         if enabled == self._mode_enabled:
@@ -242,8 +292,7 @@ class CleanQuick(Node):
             self.get_logger().info("Modo limpieza rápida activado por comando de voz.")
             if self._tts_msg_enter:
                 self._publish_tts(self._tts_msg_enter)
-            self._state = 'forward'
-            self._reset_obstacle_state()
+            self._fsm_reset(now)
             self._tilt_republish_remaining = max(0, self._tilt_republish_count - 1)
             if self._tilt_republish_remaining > 0:
                 self._tilt_next_republish_time = now + Duration(
@@ -278,6 +327,7 @@ class CleanQuick(Node):
         self.get_logger().info("Modo limpieza rápida desactivado por comando de voz.")
         if self._tts_msg_exit:
             self._publish_tts(self._tts_msg_exit)
+        self._fsm_reset(now)
         self._publish_stop()
         self._tilt_republish_remaining = 0
         self._tilt_next_republish_time = None
@@ -308,7 +358,6 @@ class CleanQuick(Node):
             '_brush_last_request',
             now,
         )
-        self._reset_obstacle_state()
 
     def _status_is_stale(self, now: rclpy.time.Time) -> bool:
         if self._last_status_stamp is None:
@@ -316,25 +365,7 @@ class CleanQuick(Node):
         age = now - self._last_status_stamp
         return age > Duration(seconds=self._status_timeout)
 
-    def _start_turn(
-        self,
-        now: rclpy.time.Time,
-        angle_deg: Optional[float] = None,
-        direction: Optional[float] = None,
-        state: Optional[str] = None,
-    ) -> None:
-        if direction is not None:
-            self._turn_direction = direction
-        self._turn_target_angle_deg = angle_deg if angle_deg is not None else self._turn_angle_deg
-        self._turn_start_yaw = self._last_yaw_deg
-        angle_rad = math.radians(self._turn_target_angle_deg)
-        duration = angle_rad / max(abs(self._turn_speed), 1e-6)
-        self._turn_timeout_deadline = now + Duration(seconds=duration)
-        if not self._use_yaw_turn or self._turn_start_yaw is None:
-            self._turn_end_time = self._turn_timeout_deadline
-        else:
-            self._turn_end_time = None
-        self._state = state if state is not None else 'turning'
+    # ─────────── Helpers de publicación ───────────
 
     def _publish_stop(self) -> None:
         self._cmd_pub.publish(Twist())
@@ -365,6 +396,8 @@ class CleanQuick(Node):
             self._tilt_next_republish_time = now + Duration(seconds=self._tilt_republish_period_sec)
         else:
             self._tilt_next_republish_time = None
+
+    # ─────────── Servicios actuadores ───────────
 
     def _request_service_state(
         self,
@@ -425,165 +458,170 @@ class CleanQuick(Node):
             wait_timeout_sec=0.1,
         )
 
+    # ─────────── Timer principal ───────────
+
     def _on_timer(self) -> None:
+        """Timer callback @10Hz: tickea actuadores + FSM."""
         now = self.get_clock().now()
-        if not self._mode_enabled:
-            self._publish_stop()
-            return
         self._ensure_actuators(now)
+        self._ensure_tilt_republish(now)
+        if not self._mode_enabled:
+            self._fsm_state = CleanState.IDLE
+            return
         if self._status_is_stale(now):
             self._publish_stop()
-            self._state = 'stale'
             return
-        self._maybe_start_bumper(now)
+        # Ultrasonic stale check (>2s sin datos = treat as inf, no bloquear)
+        if self._fsm_ultrasonic_last_stamp is not None:
+            dt = (now - self._fsm_ultrasonic_last_stamp).nanoseconds / 1e9
+            if dt > 2.0:
+                self._fsm_ultrasonic_m = float('inf')
+        self._fsm_tick(now)
 
-        if self._state == 'obs_stop':
-            if self._obs_phase_end_time is not None and now >= self._obs_phase_end_time:
-                self._start_obstacle_turn(now, 'obs_turn1')
-        elif self._state == 'obs_turn1':
-            if self._turn_should_finish(now):
-                self._turn_end_time = None
-                self._turn_timeout_deadline = None
-                self._state = 'obs_forward1'
-                self._obs_phase_end_time = now + Duration(seconds=self._advance_after_turn_sec)
-        elif self._state == 'obs_forward1':
-            if self._obs_phase_end_time is not None and now >= self._obs_phase_end_time:
-                self._start_obstacle_turn(now, 'obs_turn2')
-        elif self._state == 'obs_turn2':
-            if self._turn_should_finish(now):
-                self._turn_end_time = None
-                self._turn_timeout_deadline = None
-                self._state = 'forward'
-                self._obs_phase_end_time = None
-                self._obs_confirm_counter = 0
-                self._obs_cooldown_until = now + Duration(seconds=self._obstacle_cooldown_sec)
-        elif self._state == 'turning':
-            if self._turn_should_finish(now):
-                self._finish_bumper_turn()
-        elif self._state == 'backing':
-            if self._reverse_end_time is not None and now >= self._reverse_end_time:
-                self._reverse_end_time = None
-                direction = self._active_bumper_turn
-                self._active_bumper_turn = None
-                if direction is not None:
-                    self._start_turn(now, angle_deg=45.0, direction=direction, state='turning')
+    # ─────────── FSM ───────────
+
+    def _fsm_reset(self, now: rclpy.time.Time) -> None:
+        """Vuelve el FSM a IDLE y sincroniza el edge-detector de bumpers.
+
+        Se llama al activar y desactivar el modo limpieza. Sincronizar
+        bumper_*_prev evita falsos triggers si el bumper ya estaba
+        presionado al activar.
+        """
+        self._fsm_state = CleanState.IDLE
+        self._fsm_state_enter_time = now
+        self._fsm_last_bumper_side = None
+        self._fsm_last_random_turn_time = now
+        self._bumper_left_prev = self._bumper_left
+        self._bumper_right_prev = self._bumper_right
+
+    def _fsm_tick(self, now: rclpy.time.Time) -> None:
+        """Ejecuta una iteración del FSM y publica el Twist correspondiente.
+
+        Estados:
+          IDLE    → FORWARD al activar.
+          FORWARD → SLOW    si ultrasonic < us_slow_m.
+                  → BACKING si bumper_l/r o ultrasonic < us_stop_m.
+                  → TURNING si pasan random_turn_gap_s sin obstáculos.
+          SLOW    → FORWARD si ultrasonic > us_resume_m.
+                  → BACKING si bumper o ultrasonic < us_stop_m.
+          BACKING → TURNING tras back_duration_s.
+          TURNING → FORWARD tras turn_duration_s.
+        """
+        state = self._fsm_state
+        elapsed_s = (now - self._fsm_state_enter_time).nanoseconds / 1e9
+
+        if state == CleanState.IDLE:
+            self._fsm_enter(CleanState.FORWARD, now)
+            state = CleanState.FORWARD
+
+        bumper_event = (
+            self._bumper_left and not self._bumper_left_prev
+        ) or (
+            self._bumper_right and not self._bumper_right_prev
+        )
+
+        # Transiciones desde FORWARD
+        if state == CleanState.FORWARD:
+            if bumper_event:
+                if self._bumper_left and self._bumper_right:
+                    self._fsm_last_bumper_side = 'both'
+                elif self._bumper_left:
+                    self._fsm_last_bumper_side = 'L'
                 else:
-                    self._state = 'forward'
-        elif self._state == 'forward':
-            if self._should_confirm_obstacle(now):
-                self._obs_confirm_counter += 1
-                if self._obs_confirm_counter >= self._obstacle_confirm_count:
-                    self._obs_confirm_counter = 0
-                    self._start_obstacle_maneuver(now)
+                    self._fsm_last_bumper_side = 'R'
+                self._fsm_enter(CleanState.BACKING, now)
+            elif self._fsm_ultrasonic_m < self._fsm_us_stop_m:
+                self._fsm_last_bumper_side = 'random'
+                self._fsm_enter(CleanState.BACKING, now)
+            elif self._fsm_ultrasonic_m < self._fsm_us_slow_m:
+                self._fsm_enter(CleanState.SLOW, now)
             else:
-                self._obs_confirm_counter = 0
+                random_gap_elapsed = (
+                    now - self._fsm_last_random_turn_time
+                ).nanoseconds / 1e9
+                if random_gap_elapsed > self._fsm_random_turn_gap_s:
+                    self._fsm_last_bumper_side = 'random'
+                    self._fsm_enter(CleanState.TURNING, now)
 
-        twist = Twist()
-        if self._state in ('turning', 'obs_turn1', 'obs_turn2'):
-            twist.angular.z = self._turn_direction * self._turn_speed
-        elif self._state == 'backing':
-            twist.linear.x = -abs(self._reverse_speed)
-        elif self._state in ('forward', 'obs_forward1'):
-            twist.linear.x = self._forward_speed
+        # Transiciones desde SLOW
+        elif state == CleanState.SLOW:
+            if bumper_event:
+                if self._bumper_left and self._bumper_right:
+                    self._fsm_last_bumper_side = 'both'
+                elif self._bumper_left:
+                    self._fsm_last_bumper_side = 'L'
+                else:
+                    self._fsm_last_bumper_side = 'R'
+                self._fsm_enter(CleanState.BACKING, now)
+            elif self._fsm_ultrasonic_m < self._fsm_us_stop_m:
+                self._fsm_last_bumper_side = 'random'
+                self._fsm_enter(CleanState.BACKING, now)
+            elif self._fsm_ultrasonic_m > self._fsm_us_resume_m:
+                self._fsm_enter(CleanState.FORWARD, now)
 
-        self._cmd_pub.publish(twist)
+        # Transiciones desde BACKING
+        elif state == CleanState.BACKING:
+            if elapsed_s >= self._fsm_back_duration_s:
+                self._fsm_enter(CleanState.TURNING, now)
 
-    def _turn_should_finish(self, now: rclpy.time.Time) -> bool:
-        if self._turn_completed_by_yaw():
-            return True
-        if (self._turn_end_time is not None) and now >= self._turn_end_time:
-            return True
-        if self._turn_timeout_deadline is not None and now >= self._turn_timeout_deadline:
-            return True
-        return False
+        # Transiciones desde TURNING
+        elif state == CleanState.TURNING:
+            if elapsed_s >= self._fsm_turn_duration_s:
+                self._fsm_enter(CleanState.FORWARD, now)
+                self._fsm_last_random_turn_time = now  # resetea random gap
 
-    def _finish_bumper_turn(self) -> None:
-        self._turn_end_time = None
-        self._turn_timeout_deadline = None
-        self._turn_start_yaw = None
-        self._state = 'forward'
-        self._bumper_active = False
-        self._obs_confirm_counter = 0
+        # Construir y publicar Twist según estado actual
+        self._fsm_publish_twist()
 
-    def _maybe_start_bumper(self, now: rclpy.time.Time) -> None:
-        if self._pending_bumper_turn is None or self._bumper_active:
-            return
-        direction = self._pending_bumper_turn
-        self._pending_bumper_turn = None
-        self._cancel_obstacle_state()
-        self._bumper_active = True
-        self._active_bumper_turn = direction
-        self._state = 'backing'
-        self._reverse_end_time = now + Duration(seconds=self._reverse_time)
+        # Update bumper prev para edge detection del próximo tick.
+        self._bumper_left_prev = self._bumper_left
+        self._bumper_right_prev = self._bumper_right
 
-    def _should_confirm_obstacle(self, now: rclpy.time.Time) -> bool:
-        if self._obs_cooldown_until is not None and now < self._obs_cooldown_until:
-            return False
-        dist = self._last_dist_mm
-        if dist is None or not math.isfinite(dist) or dist == 0.0:
-            return False
-        return 50.0 <= dist <= 150.0
+    def _fsm_enter(self, new_state: 'CleanState', now: rclpy.time.Time) -> None:
+        """Transición de estado con log y reset de timer."""
+        old_state = self._fsm_state
+        self._fsm_state = new_state
+        self._fsm_state_enter_time = now
+        self.get_logger().info(
+            f"FSM: {old_state.name} -> {new_state.name} "
+            f"(bumper_side={self._fsm_last_bumper_side}, "
+            f"us={self._fsm_ultrasonic_m:.2f}m)"
+        )
 
-    def _start_obstacle_maneuver(self, now: rclpy.time.Time) -> None:
-        self._obs_dir = self._choose_obstacle_direction()
-        self._obs_confirm_counter = 0
-        self._obs_phase_end_time = now + Duration(seconds=self._stop_settle_sec)
-        self._state = 'obs_stop'
-        self._obs_turn_start_yaw = None
-        self._obs_turn_target_deg = 0.0
+    def _fsm_publish_twist(self) -> None:
+        """Construye y publica Twist según estado actual."""
+        t = Twist()
+        if self._fsm_state == CleanState.FORWARD:
+            t.linear.x = self._fsm_forward_speed
+        elif self._fsm_state == CleanState.SLOW:
+            t.linear.x = self._fsm_slow_speed
+        elif self._fsm_state == CleanState.BACKING:
+            t.linear.x = self._fsm_back_speed
+        elif self._fsm_state == CleanState.TURNING:
+            direction = self._fsm_compute_turn_direction()
+            t.angular.z = self._fsm_turn_speed * direction
+        # CleanState.IDLE → Twist cero (frenado)
+        self._cmd_pub.publish(t)
 
-    def _start_obstacle_turn(self, now: rclpy.time.Time, phase: str) -> None:
-        self._start_turn(now, angle_deg=90.0, direction=self._obs_dir, state=phase)
-        self._obs_turn_start_yaw = self._turn_start_yaw
-        self._obs_turn_target_deg = self._turn_target_angle_deg
-        self._obs_phase_end_time = None
+    def _fsm_compute_turn_direction(self) -> float:
+        """Devuelve +1.0 (izquierda) o -1.0 (derecha) según último side.
 
-    def _cancel_obstacle_state(self) -> None:
-        if self._state.startswith('obs'):
-            self._state = 'forward'
-        self._obs_phase_end_time = None
-        self._obs_confirm_counter = 0
-        self._obs_turn_start_yaw = None
-        self._obs_turn_target_deg = 0.0
-        self._turn_end_time = None
-        self._turn_timeout_deadline = None
-        self._turn_start_yaw = None
-        self._obs_cooldown_until = None
+        Bumper izq → giro a la derecha (lado contrario).
+        Bumper der → giro a la izquierda.
+        Both / random / None → giro random.
+        """
+        # Signos calibrados empíricamente para este robot (mayo 2026):
+        # tests con bumper izq+der confirmaron que +0.9 produce giro IZQ
+        # en cmd_vel directo, pero el efecto neto despues del FSM era
+        # girar al MISMO lado del bumper. Invertimos para que el robot
+        # gire siempre al lado CONTRARIO del bumper (esquivar el obstaculo).
+        if self._fsm_last_bumper_side == 'L':
+            return +1.0  # bumper izq -> giro derecha (lado contrario)
+        elif self._fsm_last_bumper_side == 'R':
+            return -1.0  # bumper der -> giro izquierda
+        return 1.0 if random.random() < 0.5 else -1.0
 
-    def _reset_obstacle_state(self) -> None:
-        self._obs_phase_end_time = None
-        self._obs_confirm_counter = 0
-        self._obs_cooldown_until = None
-        self._obs_turn_start_yaw = None
-        self._obs_turn_target_deg = 0.0
-        self._turn_end_time = None
-        self._turn_timeout_deadline = None
-        self._turn_start_yaw = None
-        self._obs_dir = 1.0
-        self._last_obstacle_dir = None
-
-    def _choose_obstacle_direction(self) -> float:
-        if self._last_obstacle_dir is None:
-            if self._turn_direction_mode == 'right':
-                direction = -1.0
-            else:
-                direction = 1.0
-        else:
-            direction = -self._last_obstacle_dir
-        self._last_obstacle_dir = direction
-        return direction
-
-    def _turn_completed_by_yaw(self) -> bool:
-        if self._turn_start_yaw is None or self._last_yaw_deg is None:
-            return False
-        delta = self._angular_distance_deg(self._turn_start_yaw, self._last_yaw_deg)
-        if self._turn_direction > 0.0:
-            return delta >= self._turn_target_angle_deg
-        return delta <= -self._turn_target_angle_deg
-
-    @staticmethod
-    def _angular_distance_deg(start: float, end: float) -> float:
-        return (end - start + 180.0) % 360.0 - 180.0
+    # ─────────── Helpers de parsing ───────────
 
     def _parse_status(self, payload: str) -> Optional[dict]:
         raw = payload.strip()

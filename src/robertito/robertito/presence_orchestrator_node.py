@@ -26,6 +26,7 @@ from typing import Optional
 
 import rclpy
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
+from rclpy.duration import Duration
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
@@ -236,6 +237,23 @@ class PresenceOrchestrator(Node):
         )
         self._listening_expr = p("listening_expression", "escuchando", str)
 
+        # ─────────── Person Tracker (PR5) ───────────
+        # Publica una señal de "activar" al tracker:
+        #   - mientras listening_active=True (conversación en curso)
+        #   - cada N min (timer aleatorio "darle vida") por unos segundos
+        # cleaning_quick tiene prioridad y mutea todo.
+        self._person_tracker_active_topic = p(
+            "person_tracker_active_topic", "/person_tracker/active", str
+        )
+        self._tracker_alive_session = False
+        # Si está prendido por "darle vida" (con deadline), guarda hasta cuándo.
+        # Si está prendido por listening_active, vale None.
+        self._tracker_alive_until = None
+        self._idle_revival_min_interval = p("idle_revival_min_min", 15.0, float)
+        self._idle_revival_max_interval = p("idle_revival_max_min", 25.0, float)
+        self._idle_revival_min_duration = p("idle_revival_min_dur_sec", 10.0, float)
+        self._idle_revival_max_duration = p("idle_revival_max_dur_sec", 30.0, float)
+
         # ─────────── Submódulos ───────────
         now = self._now()
         trig_cfg = TriggerConfig(
@@ -293,6 +311,10 @@ class PresenceOrchestrator(Node):
         self._tts_pub = self.create_publisher(String, self._tts_topic, 10)
         self._tilt_pub = self.create_publisher(Float32, self._tilt_topic, 10)
         self._cmd_vel_pub = self.create_publisher(Twist, self._cmd_vel_topic, 10)
+        # PR5: control del person_tracker.
+        self._person_tracker_pub = self.create_publisher(
+            Bool, self._person_tracker_active_topic, 10
+        )
 
         self._motor = MotorGestures(
             cmd_vel_publisher=self._cmd_vel_pub,
@@ -363,6 +385,11 @@ class PresenceOrchestrator(Node):
 
         # ─────────── Timer FSM ───────────
         self._fsm_timer = self.create_timer(self._fsm_period, self._fsm_tick, callback_group=timer_group)
+        # PR5: timer @1Hz que decide cuándo activar/desactivar person_tracker.
+        self._next_revival_at = self._schedule_next_revival(initial=True)
+        self._tracker_timer = self.create_timer(
+            1.0, self._on_tracker_timer, callback_group=timer_group
+        )
 
         # ─────────── Service de admin ───────────
         self._svc_get_state = self.create_service(
@@ -552,6 +579,88 @@ class PresenceOrchestrator(Node):
             )
             # No forzamos expresión: dejamos al FSM tomar control en el
             # próximo tick.
+
+    # ─────────── Person tracker control (PR5) ───────────
+
+    def _schedule_next_revival(self, initial: bool = False) -> "rclpy.time.Time":
+        """Cuándo es la próxima activación 'darle vida' del tracker.
+
+        En el primer arranque usa una ventana más corta para no esperar
+        siempre el máximo.
+        """
+        if initial:
+            minutes = random.uniform(5.0, self._idle_revival_max_interval)
+        else:
+            minutes = random.uniform(
+                self._idle_revival_min_interval,
+                self._idle_revival_max_interval,
+            )
+        seconds = minutes * 60.0
+        return self.get_clock().now() + Duration(seconds=seconds)
+
+    def _publish_tracker(self, active: bool) -> None:
+        self._person_tracker_pub.publish(Bool(data=bool(active)))
+
+    def _on_tracker_timer(self) -> None:
+        """Llamado @1Hz: decide si activar/desactivar /person_tracker/active.
+
+        Prioridades:
+          1) cleaning_quick=True → tracker OFF, no revival.
+          2) listening_active=True → tracker ON (sin deadline).
+          3) Sesión "darle vida" en curso → respetar deadline.
+          4) Idle: si llegó el revival_at, activar por N segundos.
+        """
+        now = self.get_clock().now()
+
+        # (1) Limpieza tiene prioridad absoluta: apagar tracker y no agendar.
+        if self._clean_mode_active:
+            if self._tracker_alive_session:
+                self._publish_tracker(False)
+                self._tracker_alive_session = False
+                self._tracker_alive_until = None
+                self.get_logger().info("Tracker apagado (cleaning_quick activo).")
+            return
+
+        # (2) Conversación abierta: tracker prendido sin deadline.
+        if self._listening_active:
+            if not self._tracker_alive_session:
+                self._publish_tracker(True)
+                self._tracker_alive_session = True
+                self._tracker_alive_until = None
+                self.get_logger().info("Tracker activado por listening_active.")
+            return
+
+        # Listening cerró pero estábamos prendidos por listening (sin deadline):
+        # apagar.
+        if self._tracker_alive_session and self._tracker_alive_until is None:
+            self._publish_tracker(False)
+            self._tracker_alive_session = False
+            self.get_logger().info("Tracker apagado: listening cerrado.")
+            self._next_revival_at = self._schedule_next_revival()
+            return
+
+        # (3) Sesión "darle vida" con deadline.
+        if self._tracker_alive_session and self._tracker_alive_until is not None:
+            if now >= self._tracker_alive_until:
+                self._publish_tracker(False)
+                self._tracker_alive_session = False
+                self._tracker_alive_until = None
+                self._next_revival_at = self._schedule_next_revival()
+                self.get_logger().info("Tracker apagado: 'darle vida' completado.")
+            return
+
+        # (4) Idle puro: ver si toca activar "darle vida".
+        if now >= self._next_revival_at:
+            duration_sec = random.uniform(
+                self._idle_revival_min_duration,
+                self._idle_revival_max_duration,
+            )
+            self._tracker_alive_until = now + Duration(seconds=duration_sec)
+            self._publish_tracker(True)
+            self._tracker_alive_session = True
+            self.get_logger().info(
+                f"'Darle vida': tracker activado por {duration_sec:.1f}s"
+            )
 
     def _on_wake(self, msg: Bool) -> None:
         if not bool(msg.data):
@@ -1018,6 +1127,12 @@ class PresenceOrchestrator(Node):
         if now < self._next_engaged_motion_at:
             return
         self._next_engaged_motion_at = now + random.uniform(self._eng_motion_min, self._eng_motion_max)
+        # PR6: no superponer mini_spin/tiny_advance con el person_tracker.
+        # Esos gestos contaminan el yaw que el tracker tiene como referencia
+        # y hacen que el RETURNING quede atascado. Las reacciones cliff/bump/
+        # startled NO se filtran acá (eso es safety y se mantiene siempre).
+        if self._tracker_alive_session:
+            return
         if random.random() > self._eng_motion_prob:
             return
         if not self._eng_motion_pool or self._motor.busy:

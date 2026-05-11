@@ -225,40 +225,25 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
+    # PR5: tracker activado, control por orchestrator vía /person_tracker/active.
+    # El tracker NO mueve adelante/atrás (linear.x=0). Solo tilt + giro acotado ±45°.
     person_tracker = Node(
         package="robertito",
         executable="person_tracker_node",
         name="person_tracker_node",
-        condition=IfCondition("false"),  # DESACTIVADO — pendiente PR5 (riesgo de spin)
+        condition=IfCondition("true"),
         output="screen",
         parameters=[
-            {"wake_topic": wake_topic},
             {"start_active": False},
-            {"activate_on_wake": False},
-            # NOTA: person_tracker_node sigue publicando expresiones a un topic
-            # propio para no pisarse con el orchestrator. Si se quiere que el
-            # follow-mode dispare expresiones, debería migrar al
-            # orchestrator_request_topic (TODO en un refactor posterior).
-            {"expression_topic": "/_unused/person_tracker_expression"},
             {"flip_horizontal": True},
-            {"command_topic": "/tracker_control"},
-            {"movement_topic": "/movement_cmds"},
             # Twist directo a /cmd_vel para que uart_bridge lo consuma.
-            # Antes apuntaba a /cmd_vel/person_track que NADIE escuchaba.
             {"cmd_vel_topic": "/cmd_vel"},
-            {"search_tilt_deg": 30.0},
-            {"search_expression": "focus"},
-            {"search_angular_speed": 0.35},
-            {"search_speed_command": "v255"},
-            {"stop_speed_command": "S"},
-            {"search_tilt_command_prefix": "t"},
+            {"tilt_topic": "/head/tilt"},
             {"neutral_tilt_deg": 0.0},
-            {"target_bbox_area": 22000.0},
-            {"target_bbox_tolerance": 6000.0},
-            {"approach_linear_speed": 0.12},
-            {"target_distance_m": 0.25},
-            {"max_linear_speed": 0.25},
-            {"max_angular_speed": 1.8},
+            {"frame_width": 640.0},
+            {"frame_height": 480.0},
+            {"lost_timeout_sec": 1.5},
+            {"control_period_sec": 0.05},
         ],
     )
 
@@ -303,7 +288,7 @@ def generate_launch_description() -> LaunchDescription:
             {"mode_topic": "/assistant/mode/cleaning_quick"},
             {"cmd_vel_topic": "arturito/cmd_vel_clean"},
             {"max_speed_mps": 0.18},
-            {"speed_pwm": 160.0},
+            {"speed_pwm": 200.0},
             {"turn_speed_radps": 0.9},
             # CRÍTICO: arrancar en INACTIVO. El default del nodo es True
             # y eso causaba que limpieza arranque sola al boot.

@@ -22,4 +22,4 @@ arturito_uart_bridge:
     ultrasonic_max_range_m: 2.0
     status_prefix: SENS
     event_prefix: EVENT
-    swap_bumpers: true
+    swap_bumpers: false
