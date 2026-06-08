@@ -12,8 +12,16 @@ def generate_launch_description() -> LaunchDescription:
     sensitivity_arg = DeclareLaunchArgument("sensitivity", default_value="0.6")
     vad_silence_arg = DeclareLaunchArgument("vad_silence_ms", default_value="800")
     vad_aggressiveness_arg = DeclareLaunchArgument("vad_aggressiveness", default_value="2")
+    # Entrada (STT/mic): sounddevice por default. Salida (TTS) usa ALSA
+    # directo al parlante USB; ver tts_audio_backend / tts_audio_device.
     audio_backend_arg = DeclareLaunchArgument("audio_backend", default_value="sounddevice")
     audio_device_arg = DeclareLaunchArgument("audio_device", default_value="default")
+    tts_audio_backend_arg = DeclareLaunchArgument(
+        "tts_audio_backend", default_value="alsa"
+    )
+    tts_audio_device_arg = DeclareLaunchArgument(
+        "tts_audio_device", default_value="plughw:CARD=Device,DEV=0"
+    )
     voice_mode_arg = DeclareLaunchArgument("voice_mode", default_value="normal")
     stt_mode_arg = DeclareLaunchArgument("stt_mode", default_value="azure")
     wake_word_arg = DeclareLaunchArgument("wake_word", default_value="robertito")
@@ -27,6 +35,8 @@ def generate_launch_description() -> LaunchDescription:
     vad_aggressiveness = LaunchConfiguration("vad_aggressiveness")
     audio_backend = LaunchConfiguration("audio_backend")
     audio_device = LaunchConfiguration("audio_device")
+    tts_audio_backend = LaunchConfiguration("tts_audio_backend")
+    tts_audio_device = LaunchConfiguration("tts_audio_device")
     voice_mode = LaunchConfiguration("voice_mode")
     stt_mode = LaunchConfiguration("stt_mode")
     wake_word = LaunchConfiguration("wake_word")
@@ -102,8 +112,8 @@ def generate_launch_description() -> LaunchDescription:
             {"tts_pitch": tts_pitch},
             {"tts_output_format": "Riff24Khz16BitMonoPcm"},
             {"enable_ssml": True},
-            {"audio_backend": audio_backend},
-            {"audio_device": audio_device},
+            {"audio_backend": tts_audio_backend},
+            {"audio_device": tts_audio_device},
             {"startup_message": ""},
         ],
     )
@@ -115,6 +125,8 @@ def generate_launch_description() -> LaunchDescription:
             vad_aggressiveness_arg,
             audio_backend_arg,
             audio_device_arg,
+            tts_audio_backend_arg,
+            tts_audio_device_arg,
             voice_mode_arg,
             stt_mode_arg,
             wake_word_arg,

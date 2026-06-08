@@ -1,0 +1,30 @@
+devices_json_path: ~/.config/robertito/smarthome/devices.json
+poll_period_s: 30.0
+tuya_timeout_s: 3.0
+timezone: America/Argentina/Buenos_Aires
+lights:
+  quincho:
+    ip: 192.168.0.64
+    dps: 1
+  patio:
+    ip: 192.168.0.64
+    dps: 2
+  sala:
+    ip: 192.168.0.64
+    dps: 3
+  living:
+    ip: 192.168.0.65
+    dps: 1
+  puerta:
+    ip: 192.168.0.65
+    dps: 2
+groups:
+  todo:
+    - quincho
+    - patio
+    - sala
+    - living
+always_on:
+  puerta:
+    start: "18:00"
+    end: "07:00"

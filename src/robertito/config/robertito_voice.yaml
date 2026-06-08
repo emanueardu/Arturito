@@ -16,9 +16,20 @@ voice_synth_node:
     use_ssml: false
     enable_ssml: false
 
-    audio_backend: sounddevice
-    audio_device: default
+    # Salida de audio: ALSA directo al parlante USB (bypass PipeWire/PulseAudio/BT).
+    # plughw:CARD=Device,DEV=0 referencia el parlante USB por nombre de card
+    # (estable aunque cambie el orden de enumeración USB entre arranques).
+    # Si el device no existe en runtime, el nodo cae automáticamente a "default".
+    audio_backend: alsa
+    audio_device: plughw:CARD=Device,DEV=0
     play_command: "internal"
+
+    # Configuración explícita opcional. Si está presente, sobrescribe los
+    # flat audio_backend/audio_device de arriba. Útil para alternar entre
+    # USB (voz) y BT (música) sin tocar el resto del archivo.
+    audio_output:
+      backend: alsa
+      device: plughw:CARD=Device,DEV=0
 
     rate: 1.0
     pitch: "0"
@@ -29,9 +40,8 @@ voice_synth_node:
     cache_enabled: true
 
     # Pre-pad de silencio antes de cada frase si el stream estuvo idle.
-    # Combinado con el keepalive interno del audio_player (que escribe
-    # silencio continuo al stream para mantener despierto al speaker BT
-    # a nivel hardware), esto hace que las primeras sílabas NO se corten.
-    # Si el comienzo aún se pierde a veces, subí lead_in_silence_s a 0.7.
+    # Con ALSA directo el wake-up del speaker USB es prácticamente
+    # instantáneo, pero mantenemos un margen pequeño para no cortar la
+    # primera sílaba en transiciones de stream.
     lead_in_silence_s: 0.5
     lead_in_idle_threshold_s: 3.0

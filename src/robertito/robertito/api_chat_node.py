@@ -17,6 +17,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool, Float32, String
+from std_srvs.srv import SetBool, Trigger
 
 from robertito.audio_player import AudioFormat, AudioPlayer
 from robertito.family_companion import (
@@ -422,6 +423,66 @@ _WEATHER_TRIGGERS = [
     "como esta el tiempo",
     "como esta el clima",
 ]
+_LIGHTS_KEYWORDS = [
+    "luz", "luces", "lampar", "ilumin",
+    "prend", "prende", "encend", "encende", "encender",
+    "apag", "apaga", "apagar",
+    "alterna", "alternar", "cambia", "cambiar",
+    "toca", "tocar", "tira",
+    "quincho", "patio", "sala", "living", "puerta",
+]
+_LIGHTS_TOOL = [{
+    "type": "function",
+    "function": {
+        "name": "control_light",
+        "description": (
+            "Controla una luz de la casa de Emanuel. Disponibles: "
+            "quincho, patio y sala (las tres en el fondo/patio/exterior); "
+            "living (sala principal interior); puerta (zona entrada interior). "
+            "Si el usuario dice 'alternar', 'cambiar', 'tocar' la luz "
+            "sin indicar explícitamente on/off, usá el estado actual "
+            "provisto en el system prompt para invertir el valor. "
+            "Si el pedido es ambiguo o no es sobre luces, NO llames esta tool."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "enum": ["quincho", "patio", "sala", "living", "puerta"],
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["on", "off"],
+                },
+            },
+            "required": ["name", "action"],
+        },
+    },
+}]
+_LIGHT_ARTICLES = {
+    "quincho": "el quincho",
+    "patio": "el patio",
+    "sala": "la sala",
+    "living": "el living",
+    "puerta": "la puerta",
+}
+_LIGHT_ACK_ON_TEMPLATES = [
+    "Listo, prendí {art}.",
+    "{art_cap} prendido.",
+    "Encendido {art}.",
+]
+_LIGHT_ACK_OFF_TEMPLATES = [
+    "Listo, apagué {art}.",
+    "{art_cap} apagado.",
+    "Apago {art}.",
+]
+_LIGHT_GROUP_OFF_TRIGGERS = [
+    "apaga todo",
+    "apagar todo",
+    "apaga todas las luces",
+    "apagar todas las luces",
+]
 
 
 class APIChatNode(Node):
@@ -680,8 +741,13 @@ class APIChatNode(Node):
             if self._clean_mode_topic
             else None
         )
+        self._light_clients: Dict[str, Any] = {}
+        self._light_group_clients: Dict[str, Any] = {}
+        self._light_state_lock = threading.Lock()
+        self._light_state: Dict[str, Optional[bool]] = {}
         self.create_subscription(Bool, self._wake_topic, self._on_wake_event, 10)
         self.create_subscription(String, self._user_text_topic, self._on_user_text, 10)
+        self.create_subscription(String, "/smart_home/state", self._on_smart_home_state, 1)
         self.create_subscription(
             Bool, self._listening_timeout_topic, self._on_listening_timeout, 10
         )
@@ -691,11 +757,19 @@ class APIChatNode(Node):
         # PR4.1.1 - listening_active source of truth de la ventana de
         # conversacion (sincronizado con wake_word_listener).
         self._listening_active = False
+        # PR7: trackear estado de cleaning_quick para implementar TOGGLE
+        # (cualquier comando 'limpiar' con cleaning activo -> desactiva).
+        # Soluciona problema del STT que confunde 'desactivar' con 'activar'.
+        self._cleaning_quick_active = False
         self._listening_active_topic = self.declare_parameter(
             "listening_active_topic", "/behavior/listening_active"
         ).value
         self.create_subscription(
             Bool, self._listening_active_topic, self._on_listening_active_change, 10
+        )
+        # PR7: trackear cleaning_quick para toggle
+        self.create_subscription(
+            Bool, self._clean_mode_topic, self._on_cleaning_quick_change, 10
         )
 
         # Stack "living": publisher de ground_mode + endpoint de frases para
@@ -879,6 +953,23 @@ class APIChatNode(Node):
                 daemon=True,
             ).start()
 
+    def _on_cleaning_quick_change(self, msg: Bool) -> None:
+        """Trackear estado de cleaning_quick para el toggle por wake."""
+        self._cleaning_quick_active = bool(msg.data)
+
+    def _on_smart_home_state(self, msg: String) -> None:
+        try:
+            payload = json.loads(msg.data)
+            if not isinstance(payload, dict):
+                raise ValueError("payload no es dict")
+            state: Dict[str, Optional[bool]] = {}
+            for name, value in payload.items():
+                state[str(name)] = value if isinstance(value, bool) or value is None else None
+            with self._light_state_lock:
+                self._light_state = state
+        except Exception as exc:
+            self.get_logger().warn(f"smart_home state inválido: {exc}")
+
     def _on_listening_active_change(self, msg: Bool) -> None:
         """Sincroniza con la ventana del wake_word_listener.
 
@@ -1051,6 +1142,10 @@ class APIChatNode(Node):
         if self._handle_ground_mode_intent(normalized, session_id):
             return
         if self._handle_robot_function_intent(normalized, session_id):
+            return
+        if self._handle_lights_group_intent(normalized, session_id):
+            return
+        if self._handle_lights_intent(user_text, normalized, session_id):
             return
         if self._handle_small_talk(normalized, session_id):
             return
@@ -1298,9 +1393,160 @@ class APIChatNode(Node):
         self._set_assistant_state(AssistantState.IDLE)
         self._log_metrics()
 
+    def _get_light_client(self, name: str) -> Any:
+        if name not in self._light_clients:
+            self._light_clients[name] = self.create_client(SetBool, f"/smart_home/{name}/set")
+        return self._light_clients[name]
+
+    def _call_light_service(self, name: str, turn_on: bool) -> Tuple[bool, str]:
+        client = self._get_light_client(name)
+        if not client.wait_for_service(timeout_sec=1.5):
+            return False, "smart_home_node no responde"
+        req = SetBool.Request()
+        req.data = bool(turn_on)
+        future = client.call_async(req)
+        t0 = time.monotonic()
+        while not future.done():
+            if time.monotonic() - t0 > 3.0:
+                return False, "timeout"
+            time.sleep(0.05)
+        resp = future.result()
+        return bool(resp.success), str(resp.message or "")
+
+    def _get_light_group_off_client(self, name: str) -> Any:
+        if name not in self._light_group_clients:
+            self._light_group_clients[name] = self.create_client(
+                Trigger, f"/smart_home/{name}/off"
+            )
+        return self._light_group_clients[name]
+
+    def _call_light_group_off_service(self, name: str) -> Tuple[bool, str]:
+        client = self._get_light_group_off_client(name)
+        if not client.wait_for_service(timeout_sec=1.5):
+            return False, "smart_home_node no responde"
+        future = client.call_async(Trigger.Request())
+        t0 = time.monotonic()
+        while not future.done():
+            if time.monotonic() - t0 > 70.0:
+                return False, "timeout"
+            time.sleep(0.05)
+        resp = future.result()
+        return bool(resp.success), str(resp.message or "")
+
     def _publish_tilt(self, deg: float) -> None:
         if self._tilt_pub is not None:
             self._tilt_pub.publish(Float32(data=float(deg)))
+
+    def _handle_lights_group_intent(self, normalized_text: str, session_id: int) -> bool:
+        if not any(trigger in normalized_text for trigger in _LIGHT_GROUP_OFF_TRIGGERS):
+            return False
+        self.get_logger().info("lights group_off tool_call group=todo action=off")
+        ok, srv_msg = self._call_light_group_off_service("todo")
+        if not ok:
+            self.get_logger().warn(f"lights smart_home group_off failed: {srv_msg}")
+            self._respond_with_voice(f"No pude apagar todo, {srv_msg}.", session_id)
+            return True
+        self.get_logger().info(f"lights smart_home group_off ok: {srv_msg}")
+        self._respond_with_voice(
+            "Listo, apagué quincho, sala, patio y living. La puerta queda sin tocar.",
+            session_id,
+        )
+        return True
+
+    def _handle_lights_intent(
+        self, original_text: str, normalized_text: str, session_id: int
+    ) -> bool:
+        if not any(kw in normalized_text for kw in _LIGHTS_KEYWORDS):
+            return False
+
+        with self._light_state_lock:
+            snapshot = dict(self._light_state)
+        parts = []
+        for name in ("quincho", "patio", "sala", "living", "puerta"):
+            value = snapshot.get(name)
+            if value is True:
+                parts.append(f"{name}=encendida")
+            elif value is False:
+                parts.append(f"{name}=apagada")
+            else:
+                parts.append(f"{name}=desconocido")
+        state_summary = "; ".join(parts)
+        self.get_logger().info(f"lights intent candidate: state={state_summary}")
+
+        system = (
+            "Sos Robertito, asistente de Emanuel. Tenés acceso a la tool "
+            "control_light para encender/apagar luces de su casa.\n\n"
+            f"Estado actual: {state_summary}.\n\n"
+            "Reglas:\n"
+            "- Si el usuario pide claramente 'prendé X' o 'apagá X', usá la tool con action on/off.\n"
+            "- Si dice 'alterná X' o 'cambiá X' o 'tocá X', invertí el estado actual.\n"
+            "- Si el pedido es ambiguo (ej. 'X es bonita') o no menciona luces, "
+            "  NO llames la tool. Respondé con texto vacío en ese caso."
+        )
+        headers = {"Content-Type": "application/json"}
+        api_key = os.getenv("OPENAI_API_KEY")
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        payload = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": original_text},
+            ],
+            "tools": _LIGHTS_TOOL,
+            "tool_choice": "auto",
+            "stream": False,
+            "max_tokens": 120,
+            "temperature": 0.2,
+        }
+        try:
+            resp = self._http_session.post(
+                self._api_url, headers=headers, json=payload, timeout=8,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as exc:
+            self.get_logger().warn(f"lights intent LLM call failed: {exc}")
+            return False
+
+        message = data["choices"][0]["message"]
+        tool_calls = message.get("tool_calls") or []
+        if not tool_calls:
+            self.get_logger().info("lights intent: no tool_call")
+            return False
+        call = tool_calls[0]
+        if call.get("type") != "function":
+            return False
+        try:
+            args = json.loads(call["function"]["arguments"])
+            name = str(args["name"]).strip().lower()
+            action = str(args["action"]).strip().lower()
+        except Exception as exc:
+            self.get_logger().warn(f"lights tool args inválidos: {exc}")
+            return False
+        if name not in _LIGHT_ARTICLES or action not in ("on", "off"):
+            return False
+
+        turn_on = action == "on"
+        self.get_logger().info(f"lights tool_call control_light name={name} action={action}")
+        ok, srv_msg = self._call_light_service(name, turn_on)
+        if not ok:
+            self.get_logger().warn(
+                f"lights smart_home service failed name={name} action={action}: {srv_msg}"
+            )
+            self._respond_with_voice(
+                f"No pude controlar {_LIGHT_ARTICLES[name]}, {srv_msg}.",
+                session_id,
+            )
+            return True
+        art = _LIGHT_ARTICLES[name]
+        templates = _LIGHT_ACK_ON_TEMPLATES if turn_on else _LIGHT_ACK_OFF_TEMPLATES
+        ack = random.choice(templates).format(art=art, art_cap=art.capitalize())
+        self.get_logger().info(
+            f"lights smart_home service ok name={name} action={action}: {srv_msg}"
+        )
+        self._respond_with_voice(ack, session_id)
+        return True
 
     def _handle_follow_intent(self, normalized_text: str, session_id: int) -> bool:
         if any(trigger in normalized_text for trigger in _FOLLOW_ON_TRIGGERS):
@@ -1319,7 +1565,24 @@ class APIChatNode(Node):
         return False
 
     def _handle_clean_intent(self, normalized_text: str, session_id: int) -> bool:
-        if any(trigger in normalized_text for trigger in _CLEAN_ON_TRIGGERS):
+        # PR7: detectar CUALQUIER trigger relacionado (ON o OFF)
+        matched_on = any(t in normalized_text for t in _CLEAN_ON_TRIGGERS)
+        matched_off = any(t in normalized_text for t in _CLEAN_OFF_TRIGGERS)
+
+        # TOGGLE: si cleaning_quick esta activo, cualquier trigger relacionado lo desactiva.
+        # Esto soluciona el problema del STT que a menudo confunde
+        # 'desactivar limpieza' con 'activar limpieza' por el ruido del aspirador.
+        if self._cleaning_quick_active and (matched_on or matched_off):
+            self._publish_bool(self._clean_mode_pub, False)
+            self._publish_bool(self._clean_enable_input_pub, False)
+            self._publish_tilt(self._mode_off_tilt_deg)
+            self._respond_with_voice(
+                "Modo limpieza rápida desactivado.", session_id
+            )
+            return True
+
+        # Comportamiento normal cuando cleaning NO esta activo
+        if matched_on:
             # 1) Tilt 60° hacia arriba (cámara/ultrasonido bien arriba para
             #    evitar chocar con superficies bajas durante la limpieza).
             self._publish_tilt(60.0)

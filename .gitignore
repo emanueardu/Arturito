@@ -27,6 +27,9 @@ __pycache__/
 *.env
 .env.*
 /home/robot/.config/robertito.env
+src/robertito/config/devices.json
+src/robertito/config/smarthome/devices.json
+.config/robertito/smarthome/devices.json
 
 # Frontend dependencies
 dist/
@@ -49,4 +52,3 @@ yarn-error.log*
 
 # Reportes temporales
 robertito_audit.md
-

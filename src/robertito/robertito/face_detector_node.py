@@ -36,6 +36,26 @@ class ArturitoFaceDetector(Node):
         self._min_neighbors = int(self.declare_parameter('min_neighbors', 5).value)
         self._min_size = int(self.declare_parameter('min_size_px', 30).value)
 
+        # Backend: 'haar' (rapido, cascade clasico, sensible a luz/angulo)
+        # o 'dnn' (ResNet SSD via OpenCV DNN, ~120ms en Pi 5 pero mucho mas
+        # robusto a luz pobre/contraluz/perfil).
+        self._detector_backend = str(
+            self.declare_parameter('detector_backend', 'haar').value
+        ).lower().strip()
+        self._dnn_model_pb = str(
+            self.declare_parameter('dnn_model_pb', '').value
+        )
+        self._dnn_model_pbtxt = str(
+            self.declare_parameter('dnn_model_pbtxt', '').value
+        )
+        self._dnn_conf_threshold = float(
+            self.declare_parameter('dnn_conf_threshold', 0.5).value
+        )
+        self._dnn_input_size = int(
+            self.declare_parameter('dnn_input_size', 300).value
+        )
+        self._dnn_net = None  # type: Optional[cv2.dnn_Net]
+
         # Pre-procesado para baja iluminación.
         # CLAHE (Contrast Limited Adaptive Histogram Equalization) ecualiza
         # contraste por tiles, levanta caras en zonas oscuras sin saturar
@@ -103,6 +123,16 @@ class ArturitoFaceDetector(Node):
         if self._cascade.empty():
             raise RuntimeError(f'Failed to load cascade file: {self._cascade_path}')
 
+        if self._detector_backend == 'dnn':
+            self._dnn_net = self._load_dnn_net()
+            if self._dnn_net is None:
+                self.get_logger().error(
+                    'DNN backend solicitado pero el modelo no se pudo cargar; '
+                    'caigo a Haar.'
+                )
+                self._detector_backend = 'haar'
+        self.get_logger().info(f'Detector backend activo: {self._detector_backend}')
+
         self._bridge = CvBridge()
         self._pub_detections = self.create_publisher(Detection2DArray, self._detection_topic, qos)
         self._pub_face_flag = self.create_publisher(Bool, 'arturito/face_detected', qos)
@@ -166,6 +196,24 @@ class ArturitoFaceDetector(Node):
                 )
             self._cap = cap
 
+    def _load_dnn_net(self) -> Optional['cv2.dnn_Net']:
+        pb = self._dnn_model_pb
+        txt = self._dnn_model_pbtxt
+        if not pb or not os.path.isfile(pb):
+            self.get_logger().error(f'dnn_model_pb no existe: {pb}')
+            return None
+        if not txt or not os.path.isfile(txt):
+            self.get_logger().error(f'dnn_model_pbtxt no existe: {txt}')
+            return None
+        try:
+            net = cv2.dnn.readNetFromTensorflow(pb, txt)
+            net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+            net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+            return net
+        except Exception as exc:
+            self.get_logger().error(f'No pude cargar DNN: {exc}')
+            return None
+
     def _find_default_cascade(self, filename: str) -> str:
         candidates = []
         data_attr = getattr(cv2, 'data', None)
@@ -228,25 +276,27 @@ class ArturitoFaceDetector(Node):
             mean_val = float(cv2.mean(gray)[0])
             self._pub_brightness.publish(Float32(data=mean_val))
 
-        # Pre-procesado para detección en baja iluminación:
-        #  1. Si la imagen está oscura (mean < umbral), aplica gamma < 1
-        #     para levantar tonos medios.
-        #  2. CLAHE ecualiza el contraste local, ayuda con caras en sombra.
-        gray_for_detect = gray
-        try:
-            mean_now = float(cv2.mean(gray)[0])
-            if mean_now < self._dark_gamma_threshold and self._dark_gamma_value > 1.0:
-                inv_gamma = 1.0 / self._dark_gamma_value
-                table = (
-                    ((np.arange(256) / 255.0) ** inv_gamma) * 255.0
-                ).astype('uint8')
-                gray_for_detect = cv2.LUT(gray_for_detect, table)
-            if self._clahe is not None:
-                gray_for_detect = self._clahe.apply(gray_for_detect)
-        except Exception:
+        if self._detector_backend == 'dnn':
+            # DNN ResNet SSD trabaja en BGR directo; ignora el pipeline gray
+            # (CLAHE/gamma están pensados para Haar).
+            detections = self._detect_faces_dnn(frame)
+        else:
+            # Pre-procesado para detección Haar en baja iluminación.
             gray_for_detect = gray
+            try:
+                mean_now = float(cv2.mean(gray)[0])
+                if mean_now < self._dark_gamma_threshold and self._dark_gamma_value > 1.0:
+                    inv_gamma = 1.0 / self._dark_gamma_value
+                    table = (
+                        ((np.arange(256) / 255.0) ** inv_gamma) * 255.0
+                    ).astype('uint8')
+                    gray_for_detect = cv2.LUT(gray_for_detect, table)
+                if self._clahe is not None:
+                    gray_for_detect = self._clahe.apply(gray_for_detect)
+            except Exception:
+                gray_for_detect = gray
+            detections = self._detect_faces(gray_for_detect)
 
-        detections = self._detect_faces(gray_for_detect)
         self._publish_results(detections, frame)
 
     def _detect_faces(self, gray) -> list[tuple[int, int, int, int]]:
@@ -257,6 +307,37 @@ class ArturitoFaceDetector(Node):
             minSize=(self._min_size, self._min_size),
         )
         return list(faces)
+
+    def _detect_faces_dnn(
+        self, frame_bgr
+    ) -> list[tuple[int, int, int, int]]:
+        if self._dnn_net is None:
+            return []
+        h, w = frame_bgr.shape[:2]
+        size = max(64, int(self._dnn_input_size))
+        try:
+            blob = cv2.dnn.blobFromImage(
+                frame_bgr, 1.0, (size, size),
+                (104.0, 177.0, 123.0), False, False,
+            )
+            self._dnn_net.setInput(blob)
+            detections = self._dnn_net.forward()
+        except Exception as exc:
+            self.get_logger().warn(f'DNN forward falló: {exc}', throttle_duration_sec=10.0)
+            return []
+        out: list[tuple[int, int, int, int]] = []
+        for d in detections[0, 0]:
+            conf = float(d[2])
+            if conf < self._dnn_conf_threshold:
+                continue
+            x1 = int(max(0, d[3] * w))
+            y1 = int(max(0, d[4] * h))
+            x2 = int(min(w - 1, d[5] * w))
+            y2 = int(min(h - 1, d[6] * h))
+            if x2 <= x1 or y2 <= y1:
+                continue
+            out.append((x1, y1, x2 - x1, y2 - y1))
+        return out
 
     def _publish_results(self, faces, frame) -> None:
         stamp = self.get_clock().now().to_msg()

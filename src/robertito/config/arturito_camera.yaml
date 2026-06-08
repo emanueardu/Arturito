@@ -1,18 +1,30 @@
-arturito_face_detector:
+face_detector_node:
   ros__parameters:
     camera_device: 0
     frame_width: 640
     frame_height: 480
-    frame_rate: 15.0
+    # DNN inference es ~120ms/frame en Pi 5 → 8 FPS reales. Subirlo no
+    # mejora nada porque el timer ya queda detrás.
+    frame_rate: 8.0
     frame_id: arturito_camera
-    cascade_path: ""
-    # Antes: scale_factor 1.1, min_neighbors 5, min_size 30 → estricto.
-    # Para iluminación pobre relajamos: más ventanas, menos vecinos exigidos,
-    # cara más chica aceptable. Da algunos falsos positivos pero los rebaja
-    # CLAHE+gamma. Si aparecen demasiadas falsas detecciones, subí
-    # min_neighbors a 4-5 de nuevo.
+
+    # ─── Detector ───
+    # backend: 'haar' (clasico, rapido pero fragil) o 'dnn' (ResNet SSD via
+    # OpenCV DNN, ~120ms/frame en Pi 5 pero mucho mas robusto a luz pobre,
+    # contraluz y caras de perfil). Si dnn falla al cargar el modelo, el
+    # nodo cae automaticamente a haar.
+    detector_backend: dnn
+    dnn_model_pb: /home/robot/ros2_ws/src/robertito/models/opencv_face_detector_uint8.pb
+    dnn_model_pbtxt: /home/robot/ros2_ws/src/robertito/models/opencv_face_detector.pbtxt
+    dnn_conf_threshold: 0.5
+    dnn_input_size: 300
+
+    # Haar (fallback). Cascade alt2 = mas permisivo que default; mejor con
+    # caras parciales, contraluz y luz mixta. Solo aplica si detector_backend
+    # es 'haar' o si el DNN no carga.
+    cascade_path: /usr/share/opencv4/haarcascades/haarcascade_frontalface_alt2.xml
     scale_factor: 1.08
-    min_neighbors: 3
+    min_neighbors: 2
     min_size_px: 24
     publish_annotated_image: true
     annotated_topic: arturito/camera/faces/image
@@ -20,21 +32,23 @@ arturito_face_detector:
     publish_brightness: true
     brightness_topic: arturito/camera/brightness
 
-    # ─── Pre-procesado para baja iluminación ───
-    # CLAHE: equalización local de contraste. Mejora detección de caras en
-    # sombra sin saturar zonas claras. Gratis (~0.5ms en Pi 5).
+    # ─── Pre-procesado conservador ───
+    # Settings agresivos (CLAHE alto + gamma siempre + brightness/gain
+    # boosteados) generaban imagen "lavada" con halos. Volvimos a un stack
+    # moderado: CLAHE suave + gamma sólo en oscuridad real + sensor en
+    # defaults. Sube esto solo si la escena queda muy oscura.
     enable_clahe: true
     clahe_clip_limit: 2.5
     clahe_tile_grid: 8
-    # Si el frame está oscuro (mean < threshold), aplicamos gamma para
-    # levantar medios tonos antes del CLAHE. Valor > 1 = aclara.
-    dark_gamma_threshold: 60.0
-    dark_gamma_value: 1.6
+    # Gamma sólo cuando el frame está realmente oscuro (mean < 80). En
+    # interior con luz normal NO se aplica → evita lavar la imagen.
+    dark_gamma_threshold: 80.0
+    dark_gamma_value: 1.5
 
-    # ─── V4L2: ajustes de cámara para low-light ───
-    # -1 = no tocar (mantiene defaults). Rangos típicos webcam 0..255.
-    # auto_exposure: 1 = manual, 3 = aperture priority (default ideal).
+    # ─── V4L2: defaults del sensor ───
+    # -1 = no tocar. Brightness/gain altos amplifican y meten ruido + lavado.
+    # Mejor dejar al sensor su exposición auto y NO meter boost extra acá.
     cam_auto_exposure: 3
     cam_brightness: 128
-    cam_gain: 200
+    cam_gain: 100
     cam_contrast: 128

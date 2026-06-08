@@ -19,6 +19,7 @@ def generate_launch_description() -> LaunchDescription:
     default_living_phrases_path = os.path.join(pkg_share, "config", "living_phrases.yaml")
     default_eyes_params = os.path.join(pkg_share, "config", "arturito_eyes.yaml")
     default_orchestrator_params = os.path.join(pkg_share, "config", "presence_orchestrator.yaml")
+    default_compass_params = os.path.join(pkg_share, "config", "compass.yaml")
 
     startup_message_arg = DeclareLaunchArgument(
         "startup_message",
@@ -225,6 +226,14 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
+    compass = Node(
+        package="robertito",
+        executable="compass_node",
+        name="compass_node",
+        output="screen",
+        parameters=[default_compass_params],
+    )
+
     # PR5: tracker activado, control por orchestrator vía /person_tracker/active.
     # El tracker NO mueve adelante/atrás (linear.x=0). Solo tilt + giro acotado ±45°.
     person_tracker = Node(
@@ -313,6 +322,43 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
+    smart_home = Node(
+        package="robertito",
+        executable="smart_home_node",
+        name="smart_home_node",
+        output="screen",
+        emulate_tty=True,
+        parameters=[{}],
+    )
+
+    pet_recognizer = Node(
+        package="robertito",
+        executable="pet_recognizer_node",
+        name="pet_recognizer_node",
+        output="screen",
+        parameters=[{
+            # Modelo MobileNet-SSD VOC. Detecta cat/dog en el stream que
+            # publica face_detector_node. Loli/Pipi/Joky se distinguen por
+            # heurística de color (% naranja en el bbox).
+            "mobilenet_caffemodel":
+                "/home/robot/ros2_ws/src/robertito/models/MobileNetSSD_deploy.caffemodel",
+            "mobilenet_prototxt":
+                "/home/robot/ros2_ws/src/robertito/models/MobileNetSSD_deploy.prototxt",
+            "conf_threshold": 0.5,
+            "check_interval_s": 3.0,
+            "greet_cooldown_s": 60.0,
+            "min_bbox_area_pct": 0.02,
+            # Loli (calicó) tiene mucho naranja en bbox, Pipi (tabby gris)
+            # casi nada. Joky es el único perro: cualquier "dog" → Joky.
+            "orange_loli_min": 0.05,
+            "orange_pipi_max": 0.02,
+            "image_topic": "/arturito/camera/faces/image",
+            "tts_topic": "/assistant/say",
+            "listening_topic": "/behavior/listening_active",
+            "speaking_topic": "/behavior/speaking_active",
+        }],
+    )
+
     ld = LaunchDescription()
     ld.add_action(startup_message_arg)
     ld.add_action(wake_word_arg)
@@ -332,9 +378,12 @@ def generate_launch_description() -> LaunchDescription:
     ld.add_action(wake_listener)
     ld.add_action(api_chat)
     ld.add_action(face_detector)
+    ld.add_action(compass)
     ld.add_action(person_tracker)
     ld.add_action(presence_orchestrator)
     ld.add_action(behavior_state)
     ld.add_action(clean_quick)
     ld.add_action(uart_bridge)
+    ld.add_action(smart_home)
+    ld.add_action(pet_recognizer)
     return ld

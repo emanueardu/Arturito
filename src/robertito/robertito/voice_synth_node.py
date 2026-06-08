@@ -294,14 +294,34 @@ class VoiceSynthNode(Node):
             .get_parameter_value()
             .string_value
         )
+        # Nested `audio_output:` toma precedencia si está presente.
+        nested_backend = (
+            self.declare_parameter("audio_output.backend", "")
+            .get_parameter_value()
+            .string_value
+            .strip()
+            .lower()
+        )
+        nested_device = (
+            self.declare_parameter("audio_output.device", "")
+            .get_parameter_value()
+            .string_value
+            .strip()
+        )
+        if nested_backend:
+            self._audio_backend = nested_backend
+        if nested_device:
+            self._audio_device = nested_device
 
         self._play_command = (
             self.declare_parameter("play_command", "").get_parameter_value().string_value
         )
-        self._play_command = self._resolve_play_command(self._play_command)
+        self._play_command = self._resolve_play_command(
+            self._play_command, self._audio_backend, self._audio_device
+        )
         # Pre-pad de silencio antes de cada frase si pasó tiempo desde la
-        # última: enmascara el wake-up del speaker BT (si está dormido los
-        # primeros ms se cortan). Si las frases vienen pegadas, no pre-padea.
+        # última. Con ALSA directo el wake-up del parlante USB es casi
+        # instantáneo, pero el margen evita cortes en transiciones.
         self._lead_in_silence_s = float(
             self.declare_parameter("lead_in_silence_s", 0.35).value
         )
@@ -551,19 +571,60 @@ class VoiceSynthNode(Node):
             self.get_logger().warning("Speech queue full, dropping startup message.")
 
     @classmethod
-    def _resolve_play_command(cls, play_command: str) -> str:
+    def _resolve_play_command(
+        cls,
+        play_command: str,
+        audio_backend: str = "",
+        audio_device: str = "",
+    ) -> str:
         cleaned = (play_command or "").strip().lower()
         if cleaned in {"internal", "none", "disabled"}:
             return ""
         if play_command:
             return cls._ensure_wav_placeholder(play_command)
+        # Defaulteo según backend declarado. Para ALSA preferimos aplay -D
+        # directo (bypass de PipeWire/PulseAudio) y NO caemos a paplay.
+        backend = (audio_backend or "").strip().lower()
+        aplay_path = shutil.which("aplay")
+        if backend in ("alsa", "aplay") and aplay_path:
+            device = (audio_device or "").strip()
+            if device and device.lower() != "default":
+                return cls._ensure_wav_placeholder(
+                    f"{aplay_path} -D {device} {{wav}}"
+                )
+            return cls._ensure_wav_placeholder(f"{aplay_path} {{wav}}")
         paplay_path = shutil.which("paplay")
         if paplay_path:
             return cls._ensure_wav_placeholder(f"{paplay_path} {{wav}}")
-        aplay_path = shutil.which("aplay")
         if aplay_path:
             return cls._ensure_wav_placeholder(f"{aplay_path} {{wav}}")
         return ""
+
+    @staticmethod
+    def _alsa_device_available(device: str) -> bool:
+        """Probe que `aplay -D <device>` puede abrir el dispositivo.
+
+        Envía 0 bytes por stdin: si el device existe, aplay sale con 0 sin
+        reproducir nada; si no existe, devuelve != 0 inmediatamente.
+        """
+        aplay_path = shutil.which("aplay")
+        if not aplay_path:
+            return False
+        try:
+            result = subprocess.run(
+                [
+                    aplay_path, "-q", "-D", device,
+                    "-t", "raw", "-f", "S16_LE",
+                    "-r", "22050", "-c", "1",
+                ],
+                input=b"",
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=2.0,
+            )
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, OSError):
+            return False
 
     @staticmethod
     def _ensure_wav_placeholder(command: str) -> str:
@@ -583,6 +644,20 @@ class VoiceSynthNode(Node):
             selected_backend = "pyaudio"
         else:
             selected_backend = "aplay"
+        # Validar device ALSA: si no se puede abrir, caer a default para no
+        # tumbar el nodo TTS.
+        if selected_backend == "aplay" and device and device.lower() != "default":
+            if self._alsa_device_available(device):
+                self.get_logger().info(
+                    f"[voice] Using ALSA direct output: {device}"
+                )
+            else:
+                self.get_logger().warning(
+                    f"[voice] ALSA device '{device}' unavailable, "
+                    "using system default audio"
+                )
+                device = "default"
+                self._audio_device = "default"
         play_command_state = "configured" if self._play_command else "unset"
         self.get_logger().info(
             f"Audio player backend resolved to '{selected_backend}' "

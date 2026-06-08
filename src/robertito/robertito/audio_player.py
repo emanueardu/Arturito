@@ -325,7 +325,7 @@ class AudioPlayer:
     # -------------------------------------------------------------- APlay
     def _play_with_aplay(self, chunk: AudioChunk) -> None:
         fmt = chunk.fmt
-        cmd = [
+        base_cmd = [
             "aplay",
             "-q",
             "-f",
@@ -335,12 +335,29 @@ class AudioPlayer:
             "-c",
             str(fmt.channels),
         ]
-        if self._device_name:
-            cmd.extend(["-D", self._device_name])
+        device = (self._device_name or "").strip()
+        use_device = bool(device) and device.lower() != "default"
+        cmd = list(base_cmd)
+        if use_device:
+            cmd.extend(["-D", device])
         try:
-            subprocess.run(cmd, input=chunk.pcm_data, check=False)
+            result = subprocess.run(cmd, input=chunk.pcm_data, check=False)
         except Exception as exc:
             self._report_error(f"aplay playback failed: {exc}")
+            return
+        if result.returncode == 0 or not use_device:
+            return
+        # Fallback runtime: el device específico falló (USB desconectado,
+        # ocupado, etc.). Caemos a default para no perder esta frase, pero
+        # solo después del primer fallo logueado.
+        self._report_error(
+            f"aplay falló con device '{device}' (rc={result.returncode}); "
+            "reintentando con default ALSA"
+        )
+        try:
+            subprocess.run(base_cmd, input=chunk.pcm_data, check=False)
+        except Exception as exc:
+            self._report_error(f"aplay default fallback failed: {exc}")
 
     @staticmethod
     def _aplay_format(sample_width: int) -> str:

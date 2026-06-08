@@ -80,6 +80,11 @@ class PresenceOrchestrator(Node):
         self._tilt_topic = p("head_tilt_topic", "/head/tilt", str)
         self._cmd_vel_topic = p("cmd_vel_topic", "/cmd_vel", str)
         self._face_topic = p("face_detection_topic", "arturito/camera/faces", str)
+        # Flag de presencia humana publicado por pet_recognizer_node usando
+        # MobileNet-SSD VOC (clase "person"). Detecta personas en cualquier
+        # ángulo (perfil, contraluz) — complementa face_detected que solo
+        # ve caras frontales bien expuestas.
+        self._person_topic = p("person_detection_topic", "/arturito/person_detected", str)
         self._brightness_topic = p("brightness_topic", "arturito/camera/brightness", str)
         self._ultrasonic_topic = p("ultrasonic_topic", "arturito/ultrasonic", str)
         self._bumper_l_topic = p("bumper_left_topic", "arturito/bumper_left", str)
@@ -364,6 +369,7 @@ class PresenceOrchestrator(Node):
         timer_group = MutuallyExclusiveCallbackGroup()
 
         self.create_subscription(Detection2DArray, self._face_topic, self._on_faces, 10, callback_group=sub_group)
+        self.create_subscription(Bool, self._person_topic, self._on_person_detected, 10, callback_group=sub_group)
         self.create_subscription(Float32, self._brightness_topic, self._on_brightness, 10, callback_group=sub_group)
         self.create_subscription(Range, self._ultrasonic_topic, self._on_ultrasonic, 10, callback_group=sub_group)
         self.create_subscription(Bool, self._bumper_l_topic, self._on_bumper_l, 10, callback_group=sub_group)
@@ -504,6 +510,24 @@ class PresenceOrchestrator(Node):
             threading.Thread(target=_restore, name="face-pulse-restore", daemon=True).start()
 
         self._persistence.set_last_face_seen_at(now)
+
+    def _on_person_detected(self, msg: Bool) -> None:
+        """Persona detectada en cualquier ángulo (MobileNet-SSD).
+
+        Cuenta como "presencia" para la FSM (ENGAGED → IDLE → DROWSY → SLEEPING)
+        igual que una cara. NO dispara el pulse "te vi" (expresión feliz)
+        que sigue siendo exclusivo de detección de cara frontal.
+        """
+        if not msg.data:
+            return
+        now = self._now()
+        with self._lock:
+            self._last_face_seen_at = now
+        self._persistence.set_last_face_seen_at(now)
+        self.get_logger().info(
+            f'person_detected=True → last_face_seen_at refreshed '
+            f'(state={self._fsm.current_state.name})'
+        )
 
     def _on_brightness(self, msg: Float32) -> None:
         self._triggers.update_brightness(float(msg.data), self._now())
